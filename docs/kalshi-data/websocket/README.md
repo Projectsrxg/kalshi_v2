@@ -10,7 +10,7 @@ Low-level WebSocket client for connecting to Kalshi's WebSocket API. Used by Con
 |----------------|---------|
 | Connection | Establish WebSocket connection with auth headers |
 | Heartbeat | Respond to server pings (every 10s) |
-| Commands | Send subscribe/unsubscribe/update commands |
+| Send | Write raw bytes to connection |
 | Message reading | Read raw messages, send to channel |
 | Connection state | Track connection health |
 
@@ -19,7 +19,11 @@ Low-level WebSocket client for connecting to Kalshi's WebSocket API. Used by Con
 - Managing multiple connections
 - Reconnection policy and backoff
 - Parsing message bodies
-- Tracking ticker-to-sid mappings
+- Command/response correlation
+- Subscribe/unsubscribe semantics
+- Tracking subscription IDs
+- Sequence number tracking and gap detection
+- Resubscription on sequence gaps
 
 ---
 
@@ -27,9 +31,9 @@ Low-level WebSocket client for connecting to Kalshi's WebSocket API. Used by Con
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Message parsing | Minimal (raw bytes) | Let Message Router handle parsing |
+| Message handling | Raw bytes only | No parsing, all messages to one channel |
 | Authentication | Headers during handshake | Kalshi's documented approach |
-| Subscribe response | Wait for confirmation | Need subscription IDs for unsubscribe |
+| Command sending | Raw bytes via `Send()` | Connection Manager builds commands |
 
 ---
 
@@ -37,7 +41,7 @@ Low-level WebSocket client for connecting to Kalshi's WebSocket API. Used by Con
 
 - [Interface](./interface.md) - Public methods and types
 - [Lifecycle](./lifecycle.md) - Connection states and sequences
-- [Behaviors](./behaviors.md) - Read loop, heartbeat, subscribe/unsubscribe
+- [Behaviors](./behaviors.md) - Read loop, heartbeat, send
 - [Configuration](./configuration.md) - Config options and metrics
 - [Kalshi WebSocket API](../../kalshi-api/websocket/connection.md) - Protocol reference
-- [Connection Manager](../connection-manager/) - Manages pool of clients
+- [Connection Manager](../connection-manager/) - Manages pool of clients, handles subscriptions

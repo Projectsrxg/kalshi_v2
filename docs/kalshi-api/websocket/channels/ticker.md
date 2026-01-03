@@ -66,3 +66,5 @@ Market specification optional. Omit to receive all markets.
 | `msg.ts` | int | Unix timestamp (seconds) |
 
 Updates sent when any field changes.
+
+**Note**: Unlike `trade` and `orderbook_delta` channels, `ticker` messages do not include a `seq` sequence number field.

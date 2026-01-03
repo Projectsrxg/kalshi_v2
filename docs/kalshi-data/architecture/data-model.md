@@ -129,6 +129,19 @@ $$ LANGUAGE SQL IMMUTABLE;
 
 ### Timestamp Conversion
 
+**Two timestamp fields in time-series tables:**
+
+| Field | Source | Description |
+|-------|--------|-------------|
+| `exchange_ts` | Kalshi API `ts` field | When Kalshi processed the event (server-side) |
+| `received_at` | Gatherer `time.Now()` | When gatherer received the message (client-side) |
+
+Both stored in microseconds (µs since Unix epoch).
+
+**Use cases:**
+- `exchange_ts`: Ordering events, deduplication, analytics
+- `received_at`: Debugging latency, identifying gatherer delays
+
 ```sql
 -- Microseconds to timestamp
 CREATE FUNCTION us_to_timestamp(us BIGINT)
@@ -237,17 +250,16 @@ The `market_status` field contains the granular lifecycle state:
 | `amended` | Settlement amended |
 | `finalized` | Fully settled, final |
 
-#### 2. Filter Status (API query parameter)
+#### 2. Production Status (simplified)
 
-The `GET /markets?status=` query parameter uses grouped values that map to multiple `market_status` values:
+The production database uses simplified statuses. Deduplicator maps gatherer statuses:
 
-| Filter | Maps to `market_status` |
-|--------|-------------------------|
+| Production Status | Gatherer Statuses |
+|-------------------|-------------------|
 | `unopened` | `initialized`, `inactive` |
 | `open` | `active` |
-| `paused` | `inactive` (when previously active) |
-| `closed` | `closed`, `determined`, `disputed`, `amended` |
-| `settled` | `finalized` |
+| `closed` | `closed`, `disputed` |
+| `settled` | `determined`, `amended`, `finalized` |
 
 ---
 
@@ -265,12 +277,15 @@ CREATE TABLE trades (
 
     -- Market
     ticker          VARCHAR(128) NOT NULL,
-    event_ticker    VARCHAR(128),
+    event_ticker    VARCHAR(128),          -- Nullable, not populated by gatherer
 
     -- Trade data
     price           INTEGER NOT NULL,      -- 0-100,000 (hundred-thousandths)
     size            INTEGER NOT NULL,
-    taker_side      BOOLEAN NOT NULL       -- TRUE = YES, FALSE = NO
+    taker_side      BOOLEAN NOT NULL,      -- TRUE = YES, FALSE = NO
+
+    -- Metadata
+    sid             BIGINT                 -- Subscription ID for debugging
 );
 
 SELECT create_hypertable('trades', 'exchange_ts',
@@ -306,6 +321,9 @@ CREATE TABLE orderbook_deltas (
     side            BOOLEAN NOT NULL,      -- TRUE = YES, FALSE = NO
     price           INTEGER NOT NULL,      -- 0-100,000
     size_delta      INTEGER NOT NULL,      -- Positive = add, negative = remove
+
+    -- Metadata
+    sid             BIGINT,                -- Subscription ID for debugging
 
     PRIMARY KEY (ticker, exchange_ts, seq, price, side)
 );
@@ -353,6 +371,9 @@ CREATE TABLE orderbook_snapshots (
     best_yes_ask    INTEGER,
     spread          INTEGER,
 
+    -- Metadata
+    sid             BIGINT,                -- Subscription ID (0 for REST)
+
     PRIMARY KEY (ticker, snapshot_ts, source)
 );
 
@@ -390,6 +411,11 @@ CREATE TABLE tickers (
     last_price      INTEGER,
     volume          BIGINT,
     open_interest   BIGINT,
+    dollar_volume   BIGINT,                -- Dollar-denominated volume
+    dollar_open_interest BIGINT,           -- Dollar-denominated open interest
+
+    -- Metadata
+    sid             BIGINT,                -- Subscription ID for debugging
 
     PRIMARY KEY (ticker, exchange_ts)
 );

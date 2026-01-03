@@ -54,6 +54,7 @@ func (c *client) Connect(ctx context.Context) error {
 
     c.conn = conn
     c.connected = true
+    c.lastPingAt = time.Now() // Initialize to avoid immediate stale detection
 
     go c.readLoop()
     go c.heartbeatLoop()
@@ -88,10 +89,18 @@ func (c *client) Close() error {
     c.connected = false
     c.mu.Unlock()
 
+    // Signal goroutines to stop
     close(c.done)
 
+    // Set read deadline to unblock ReadMessage immediately
+    c.conn.SetReadDeadline(time.Now())
+
+    // Close the underlying connection
     return c.conn.Close()
 }
 ```
 
-**Note**: Client does NOT attempt reconnection. That's Connection Manager's job.
+**Notes**:
+- Client does NOT attempt reconnection. That's Connection Manager's job.
+- `SetReadDeadline` unblocks `ReadMessage` so readLoop exits cleanly.
+- Read errors after `done` is closed are ignored (see behaviors.md).

@@ -17,6 +17,19 @@ Discovers and tracks all Kalshi markets. Entry point for the gatherer's data col
 
 ---
 
+## Single Source of Truth
+
+Market Registry is the **only** source of truth for market lists within a gatherer. No other component should track markets independently.
+
+| Component | How it gets markets |
+|-----------|---------------------|
+| Connection Manager | Receives `MarketChange` events via channel |
+| Snapshot Poller | Calls `registry.GetActiveMarkets()` |
+
+This prevents divergence between components. If Connection Manager or Snapshot Poller tracked their own market lists, they could drift from Market Registry (e.g., missing a `settled` event).
+
+---
+
 ## Deployment Model
 
 Market Registry runs as a goroutine within a single Go binary alongside Connection Manager, Message Router, and Writers. All components communicate via Go channels and shared memory.
@@ -45,16 +58,17 @@ flowchart TD
 flowchart LR
     MR[Market Registry] --> REST[REST Client]
     MR --> DB[(PostgreSQL)]
-    MR --> CM[Connection Manager]
-    WS[WebSocket Pool] -->|market_lifecycle| MR
+    MR -->|MarketChange events| CM[Connection Manager]
+    CM -->|market_lifecycle| MR
 ```
 
 | Dependency | Purpose |
 |------------|---------|
 | REST Client | Fetch markets, events, series, exchange status |
 | PostgreSQL | Persist market/event/series metadata |
-| Connection Manager | Receives subscription instructions via channel |
-| WebSocket Pool | Receives `market_lifecycle` messages |
+| Connection Manager | Receives MarketChange events; provides `market_lifecycle` messages |
+
+**Note:** Connection Manager owns all WebSocket connections, including the `market_lifecycle` subscription. It routes lifecycle messages to Market Registry via a dedicated channel.
 
 ---
 

@@ -333,6 +333,29 @@ Periodic export job writes Parquet files to S3 with lifecycle policies.
 
 ---
 
+## Timestamp Conversion
+
+**Critical**: Kalshi API sends timestamps in Unix seconds, but we store in microseconds.
+
+| Source | Format | Example |
+|--------|--------|---------|
+| Kalshi REST/WS `ts` fields | Unix seconds | `1705328200` |
+| Database storage | Microseconds (µs) | `1705328200000000` |
+
+**Conversion (done by gatherer before storage):**
+
+```go
+// Seconds to microseconds
+exchangeTs := msg.Ts * 1_000_000
+
+// Capture receive time
+receivedAt := time.Now().UnixMicro()
+```
+
+All time-series queries use microsecond timestamps.
+
+---
+
 ## Throughput Estimates
 
 | Stage | Throughput |

@@ -71,13 +71,29 @@ Server sends ping frames every 10 seconds with body `heartbeat`. Respond with po
 
 ### Update Subscription
 
+Add or remove markets from an existing subscription.
+
+**Add markets:**
 ```json
 {
   "id": 3,
   "cmd": "update_subscription",
   "params": {
-    "sid": 1,
+    "sids": [1],
     "action": "add_markets",
+    "market_tickers": ["MARKET-2", "MARKET-3"]
+  }
+}
+```
+
+**Remove markets:**
+```json
+{
+  "id": 4,
+  "cmd": "update_subscription",
+  "params": {
+    "sids": [1],
+    "action": "delete_markets",
     "market_tickers": ["MARKET-2"]
   }
 }
@@ -85,9 +101,20 @@ Server sends ping frames every 10 seconds with body `heartbeat`. Respond with po
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `sid` | int | Subscription ID |
-| `action` | string | `add_markets` or `remove_markets` |
+| `sids` | array | Subscription IDs (or use `sid` for single) |
+| `action` | string | `add_markets` or `delete_markets` |
 | `market_tickers` | array | Markets to add/remove |
+
+**Response:**
+```json
+{
+  "id": 3,
+  "type": "ok",
+  "msg": {}
+}
+```
+
+Note: The subscription ID (`sid`) remains the same after update. Sequence numbers continue from where they were.
 
 ### List Subscriptions
 
@@ -98,6 +125,8 @@ Server sends ping frames every 10 seconds with body `heartbeat`. Respond with po
   "params": {}
 }
 ```
+
+**Response:** (TBD - format not yet documented by Kalshi)
 
 ## Response Types
 
@@ -145,7 +174,6 @@ Server sends ping frames every 10 seconds with body `heartbeat`. Respond with po
 package ws
 
 import (
-	"encoding/json"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -180,21 +208,16 @@ func Connect(url string, headers map[string]string) (*Client, error) {
 		return nil, err
 	}
 
-	c := &Client{conn: conn}
-	go c.heartbeat()
-	return c, nil
-}
+	// Server sends ping frames every 10s, client responds with pong
+	conn.SetPingHandler(func(data string) error {
+		return conn.WriteControl(
+			websocket.PongMessage,
+			[]byte(data),
+			time.Now().Add(time.Second),
+		)
+	})
 
-func (c *Client) heartbeat() {
-	c.conn.SetPongHandler(func(string) error { return nil })
-	for {
-		if err := c.conn.WriteControl(
-			websocket.PingMessage, []byte("ping"), time.Now().Add(time.Second),
-		); err != nil {
-			return
-		}
-		time.Sleep(30 * time.Second)
-	}
+	return &Client{conn: conn}, nil
 }
 
 func (c *Client) Subscribe(channels []string, ticker string) error {

@@ -24,11 +24,23 @@ type Registry interface {
 
     // SubscribeChanges returns a channel of market state changes.
     // Connection Manager uses this to know when to subscribe/unsubscribe.
+    // Channel is buffered (ChangeBufferSize = 1000).
     SubscribeChanges() <-chan MarketChange
+
+    // SetLifecycleSource sets the channel from which lifecycle messages are received.
+    // Connection Manager calls this to provide market_lifecycle WebSocket messages.
+    SetLifecycleSource(ch <-chan []byte)
 }
 ```
 
 **Design Decision**: Channel-based interface for async notification to Connection Manager. Go-idiomatic and non-blocking.
+
+**Constants:**
+```go
+const ChangeBufferSize = 1000  // Buffered channel for MarketChange events
+```
+
+If Connection Manager is slow (blocking on subscribes), the buffer fills. Connection Manager uses a worker pool to prevent this.
 
 ---
 
@@ -99,6 +111,12 @@ type registryState struct {
     // Exchange status
     exchangeActive bool
     tradingActive  bool
+
+    // Output channel for Connection Manager
+    changes chan MarketChange  // buffered, ChangeBufferSize
+
+    // Input channel from Connection Manager (market_lifecycle messages)
+    lifecycle <-chan []byte
 }
 ```
 
@@ -120,7 +138,11 @@ flowchart TD
 
     subgraph Shared State
         CACHE[Market Cache<br/>sync.RWMutex]
-        CHANGECH[Change Channel<br/>buffered]
+        CHANGECH[Change Channel<br/>buffered 1000]
+    end
+
+    subgraph External
+        LIFECYCLE[lifecycle chan<br/>from Connection Manager]
     end
 
     SYNC --> CACHE
@@ -129,6 +151,7 @@ flowchart TD
     RECON --> CHANGECH
     STATUS --> CACHE
     EVENTS --> CACHE
+    LIFECYCLE --> HANDLER
     HANDLER --> CACHE
     HANDLER --> CHANGECH
 ```
@@ -142,3 +165,12 @@ flowchart TD
 | Lifecycle Handler | Process WS events | Write lock |
 
 All access to `registryState` protected by `sync.RWMutex`.
+
+### Concurrency Safety
+
+The `sync.RWMutex` ensures safe concurrent access:
+
+- **Read operations** (`GetActiveMarkets`, `GetMarket`): Acquire read lock, allowing concurrent reads
+- **Write operations** (sync, reconciliation, lifecycle updates): Acquire write lock, exclusive access
+
+Since all timestamps are server-provided (no clock skew concerns), ordering is determined by Kalshi's `exchange_ts`. The mutex prevents data races but does not guarantee event ordering across goroutines—this is acceptable because each goroutine processes independent data sources.

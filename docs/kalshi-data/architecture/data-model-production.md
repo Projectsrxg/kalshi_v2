@@ -205,6 +205,12 @@ CREATE TABLE markets (
     CONSTRAINT valid_market_type CHECK (market_type IN ('binary', 'scalar'))
 );
 
+-- Status mapping from gatherer (8 statuses) to production (4 statuses):
+-- initialized, inactive     -> unopened
+-- active                    -> open
+-- closed, disputed          -> closed
+-- determined, amended, finalized -> settled
+
 CREATE INDEX idx_markets_event ON markets(event_ticker);
 CREATE INDEX idx_markets_status ON markets(market_status);
 CREATE INDEX idx_markets_created ON markets(created_ts DESC);

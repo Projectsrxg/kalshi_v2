@@ -27,7 +27,7 @@ Market discovery, tracking, and lifecycle management.
 ### [connection-manager/](./connection-manager/)
 WebSocket connection pool and market assignment.
 
-### [websocket/](./websocket/)
+### [websocket/](./websocexet/)
 WebSocket client implementation.
 
 ### [message-router/](./message-router/)

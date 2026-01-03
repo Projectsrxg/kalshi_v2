@@ -31,6 +31,7 @@ Market specification optional. Omit to receive all trades.
 {
   "type": "trade",
   "sid": 1,
+  "seq": 5,
   "msg": {
     "market_ticker": "MARKET-TICKER",
     "trade_id": "trd_abc123",
@@ -49,6 +50,7 @@ Market specification optional. Omit to receive all trades.
 |-------|------|-------------|
 | `type` | string | `trade` |
 | `sid` | int | Subscription ID |
+| `seq` | int | Sequence number (per subscription) |
 | `msg.market_ticker` | string | Market ID |
 | `msg.trade_id` | string | Trade ID |
 | `msg.count` | int | Contracts |
@@ -60,3 +62,10 @@ Market specification optional. Omit to receive all trades.
 | `msg.ts` | int | Unix timestamp (seconds) |
 
 Sent immediately after trade execution.
+
+## Sequence Numbers
+
+- `seq` increments per message per subscription
+- Use to detect missed messages
+- On gap, resubscribe to ensure no trades were missed
+- Note: `trade_id` provides deduplication, but sequence gaps indicate potential missed trades
