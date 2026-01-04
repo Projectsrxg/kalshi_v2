@@ -352,13 +352,13 @@ Full orderbook state from WebSocket snapshots and 1-minute REST polling.
 CREATE TABLE orderbook_snapshots (
     -- Timing (µs since epoch)
     snapshot_ts     BIGINT NOT NULL,
-    exchange_ts     BIGINT,
+    exchange_ts     BIGINT,                -- 0 for WS/REST snapshots (not provided by API)
 
     -- Market
     ticker          VARCHAR(128) NOT NULL,
 
     -- Source
-    source          VARCHAR(8) NOT NULL,   -- 'ws' or 'rest'
+    source          VARCHAR(8) NOT NULL,   -- Values: 'ws' (2 chars) or 'rest' (4 chars)
 
     -- Book data (JSONB for flexibility)
     yes_bids        JSONB NOT NULL,        -- [{price: int, size: int}, ...]

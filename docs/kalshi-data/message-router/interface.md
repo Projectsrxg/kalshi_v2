@@ -62,7 +62,7 @@ type OrderbookMsg struct {
     SeqGap     bool
     GapSize    int
 
-    // Snapshot-only fields (nil for delta)
+    // Snapshot-only fields (empty for delta)
     Yes []PriceLevel
     No  []PriceLevel
 

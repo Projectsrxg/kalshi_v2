@@ -27,7 +27,7 @@ Market discovery, tracking, and lifecycle management.
 ### [connection-manager/](./connection-manager/)
 WebSocket connection pool and market assignment.
 
-### [websocket/](./websocexet/)
+### [websocket/](./websocket/)
 WebSocket client implementation.
 
 ### [message-router/](./message-router/)
@@ -35,6 +35,9 @@ Message demultiplexing and validation.
 
 ### [writers/](./writers/)
 Data serialization and batching.
+
+### [snapshot-poller/](./snapshot-poller/)
+REST API polling for backup snapshots.
 
 ### [storage/](./storage/)
 Persistence layer design.

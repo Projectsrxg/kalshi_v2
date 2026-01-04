@@ -18,6 +18,7 @@ type ManagerConfig struct {
     // Reconnection
     InitialBackoff time.Duration // 1s
     MaxBackoff     time.Duration // 5min
+    BackoffFactor  float64       // 2.0
 
     // Buffers
     MessageBufferSize int // 10000
@@ -35,7 +36,18 @@ type ManagerConfig struct {
 | `SubscribeTimeout` | Duration | 5s | Timeout for subscribe/unsubscribe response |
 | `InitialBackoff` | Duration | 1s | Initial reconnection delay |
 | `MaxBackoff` | Duration | 5min | Maximum reconnection delay |
+| `BackoffFactor` | float64 | 2.0 | Backoff multiplier |
 | `MessageBufferSize` | int | 10000 | Output channel buffer size |
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WS_RECONNECT_INITIAL` | `1s` | Initial reconnection backoff |
+| `WS_RECONNECT_MAX` | `5m` | Maximum reconnection backoff |
+| `WS_RECONNECT_FACTOR` | `2.0` | Backoff multiplier |
+
+See [WebSocket Recovery](../recovery/websocket-recovery.md) for reconnection behavior details.
 
 **Fixed allocation (not configurable):**
 - 2 ticker connections (1-2)

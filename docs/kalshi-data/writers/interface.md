@@ -184,7 +184,7 @@ type TickerMsg struct {
     PriceDollars       string  // Last price
     YesBidDollars      string
     YesAskDollars      string
-    NoBidDollars       string  // Not stored (derivable from YesBid)
+    NoBidDollars       string  // Received from API but not stored (derivable: 100000 - YesBid)
     Volume             int64
     OpenInterest       int64
     DollarVolume       int64

@@ -133,6 +133,15 @@ type OrderbookWriterConfig struct {
 | `writer` | `orderbook`, `trade`, `ticker`, `snapshot` |
 | `type` | `connection`, `constraint`, `timeout` |
 
+### Histogram Buckets
+
+| Metric | Buckets |
+|--------|---------|
+| `writer_batch_size` | `[10, 50, 100, 500, 1000, 5000]` |
+| `writer_flush_duration_seconds` | `[0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0]` |
+
+**Note:** Snapshot Writer is synchronous and doesn't batch, so it doesn't emit `writer_batch_size` metrics. Only `orderbook`, `trade`, and `ticker` writers emit batch metrics.
+
 ---
 
 ## Example Prometheus Queries

@@ -45,9 +45,24 @@ Rate limits apply only to order operations (writes), not market data reads.
 
 ## Documentation
 
-- `docs/STYLE_GUIDE.md` - Documentation standards
-- `docs/kalshi-api/` - Kalshi API reference (REST + WebSocket)
-- `docs/kalshi-data/` - Platform design docs by component
+```
+docs/
+├── STYLE_GUIDE.md              # Documentation standards
+├── kalshi-api/                 # Kalshi API reference
+│   ├── rest-api/               # REST endpoints (markets, orders, portfolio)
+│   └── websocket/              # WebSocket protocol and channels
+└── kalshi-data/                # Platform design docs
+    ├── architecture/           # System design, data model, scaling
+    ├── market-registry/        # Market discovery and tracking
+    ├── connection-manager/     # WebSocket pool management
+    ├── message-router/         # Message routing and fan-out
+    ├── writers/                # Batch writers (orderbook, trades, tickers)
+    ├── snapshot-poller/        # REST API backup polling
+    ├── storage/                # TimescaleDB, PostgreSQL, S3
+    ├── monitoring/             # Metrics, alerts, dashboards
+    ├── recovery/               # Failure handling, runbooks
+    └── deployment/             # Infrastructure, Terraform, IPC
+```
 
 Use Mermaid for all diagrams (no ASCII art).
 
