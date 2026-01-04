@@ -175,19 +175,19 @@ Writer flush latency P99 exceeds 1 second.
 
 ### PollCycleApproachingLimit
 
-Snapshot Poller cycle is approaching 1-minute limit.
+Snapshot Poller cycle is approaching 15-minute limit.
 
 ```yaml
 - alert: PollCycleApproachingLimit
   expr: >
     histogram_quantile(0.95,
       sum(rate(poller_poll_duration_seconds_bucket[5m])) by (le)
-    ) > 55
+    ) > 850
   for: 2m
   labels:
     severity: warning
   annotations:
-    summary: "Poll cycle approaching 1-minute limit"
+    summary: "Poll cycle approaching 15-minute limit"
     description: "P95 poll duration is {{ $value }}s. May miss cycles."
 ```
 

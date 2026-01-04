@@ -298,7 +298,7 @@ curl http://deduplicator:8080/health | jq '.gatherers'
 | Data Type | Recovery Method |
 |-----------|-----------------|
 | Trades | Cannot recover - use REST snapshot for closest state |
-| Orderbook | REST snapshots provide 1-minute resolution |
+| Orderbook | REST snapshots provide 15-minute resolution |
 | Ticker | Can interpolate from adjacent data |
 
 ### Manual Recovery

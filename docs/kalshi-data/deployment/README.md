@@ -112,11 +112,13 @@ Deduplicator polls gatherer databases using cursor-based sync. No message broker
 
 | Document | Description |
 |----------|-------------|
+| [Runbook](runbook.md) | **Start here** - End-to-end deployment guide |
 | [Binaries](binaries.md) | Monorepo structure and build commands |
+| [Configuration](configuration.md) | YAML config schemas, secrets management |
 | [Infrastructure](infrastructure.md) | AWS resource specifications |
 | [Terraform](terraform.md) | Infrastructure-as-Code templates |
 | [IPC](ipc.md) | Interprocess communication via database polling |
-| [Startup](startup.md) | Initialization order and systemd configuration |
+| [Startup](startup.md) | Initialization, database users, systemd |
 
 ---
 
@@ -134,9 +136,13 @@ Deduplicator polls gatherer databases using cursor-based sync. No message broker
 
 | Component | Inbound | Outbound |
 |-----------|---------|----------|
-| Gatherer | Deduplicator (5432) | Kalshi API (443) |
-| Deduplicator | None | Gatherers (5432), RDS (5432), S3 (443) |
+| Gatherer | Deduplicator (5432 TimescaleDB, 5433 PostgreSQL) | Kalshi API (443) |
+| Deduplicator | None | Gatherers (5432, 5433), RDS (5432), S3 (443) |
 | RDS | Deduplicator (5432) | None |
+
+**Port assignments on gatherers:**
+- `5432`: TimescaleDB (time-series data: trades, orderbook_deltas, tickers, snapshots)
+- `5433`: PostgreSQL (relational data: markets, events, series)
 
 ### Startup Order
 

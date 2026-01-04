@@ -110,16 +110,67 @@ curl http://localhost:8080/health
       "healthy": 148
     },
     "market_registry": {
-      "markets": 7500
+      "markets": 425000
     }
   }
 }
 ```
 
-**Healthy criteria:**
-- Both databases connected
-- At least 100 WebSocket connections healthy
-- Market Registry has loaded markets
+### Health Status Definitions
+
+| Status | Criteria | HTTP Code |
+|--------|----------|-----------|
+| `healthy` | All checks pass | 200 |
+| `degraded` | Partial functionality | 200 |
+| `unhealthy` | Critical failure | 503 |
+
+### Health Check Thresholds
+
+| Component | Healthy | Degraded | Unhealthy |
+|-----------|---------|----------|-----------|
+| **TimescaleDB** | Connected, ping < 100ms | Ping 100-500ms | Disconnected |
+| **PostgreSQL** | Connected, ping < 100ms | Ping 100-500ms | Disconnected |
+| **WebSocket** | ≥140 of 150 connections | 100-139 connections | <100 connections |
+| **Market Registry** | >0 markets loaded | - | 0 markets |
+
+**Threshold Rationale:**
+- **WebSocket 140/150:** Target is 150 connections (6 global + 144 orderbook). 140+ = near full capacity. Below 100 = significant orderbook coverage gaps.
+- **Database pings:** Local databases should respond in <100ms. Higher latency indicates disk or load issues.
+
+```go
+func (g *Gatherer) determineHealth() Health {
+    h := Health{Status: "healthy", Components: make(map[string]interface{})}
+
+    // Database checks
+    if !g.timescaleDB.IsConnected() || !g.postgresql.IsConnected() {
+        h.Status = "unhealthy"
+    }
+
+    // WebSocket check (target: 150 connections)
+    wsHealthy := g.connManager.HealthyConnections()
+    if wsHealthy < 100 {
+        h.Status = "unhealthy"  // Major coverage gap
+    } else if wsHealthy < 140 {
+        if h.Status == "healthy" {
+            h.Status = "degraded"  // Some connections down
+        }
+    }
+
+    // Market Registry check
+    if g.registry.MarketCount() == 0 {
+        h.Status = "unhealthy"
+    }
+
+    return h
+}
+```
+
+**Load balancer configuration:**
+- Health check path: `/health`
+- Interval: 10 seconds
+- Healthy threshold: 2 consecutive passes
+- Unhealthy threshold: 3 consecutive failures
+- Only route traffic to `healthy` instances
 
 ---
 
@@ -209,10 +260,63 @@ curl http://localhost:8080/health
 }
 ```
 
-**Healthy criteria:**
-- Production RDS connected
-- At least 1 gatherer connected
-- Sync lag < 30 seconds
+### Health Status Definitions
+
+| Status | Criteria | HTTP Code |
+|--------|----------|-----------|
+| `healthy` | All checks pass | 200 |
+| `degraded` | Partial functionality | 200 |
+| `unhealthy` | Critical failure | 503 |
+
+### Health Check Thresholds
+
+| Component | Healthy | Degraded | Unhealthy |
+|-----------|---------|----------|-----------|
+| **Production RDS** | Connected, ping < 50ms | Ping 50-200ms | Disconnected |
+| **Gatherers** | 3 connected | 1-2 connected | 0 connected |
+| **Sync Lag** | < 5 seconds | 5-30 seconds | > 30 seconds |
+
+```go
+func (d *Deduplicator) determineHealth() Health {
+    h := Health{Status: "healthy", Components: make(map[string]interface{})}
+
+    // Production RDS check
+    if !d.production.IsConnected() {
+        h.Status = "unhealthy"
+    }
+
+    // Gatherer count check
+    connectedGatherers := d.countConnectedGatherers()
+    if connectedGatherers == 0 {
+        h.Status = "unhealthy"
+    } else if connectedGatherers < 3 {
+        if h.Status == "healthy" {
+            h.Status = "degraded"
+        }
+    }
+
+    // Sync lag check
+    maxLag := d.getMaxSyncLag()
+    if maxLag > 30*time.Second {
+        h.Status = "unhealthy"
+    } else if maxLag > 5*time.Second {
+        if h.Status == "healthy" {
+            h.Status = "degraded"
+        }
+    }
+
+    return h
+}
+```
+
+### Sync Lag Alert Thresholds
+
+| Lag | Severity | Action |
+|-----|----------|--------|
+| < 5s | Normal | None |
+| 5-30s | Warning | Investigate gatherer/network issues |
+| 30s-5min | Critical | Check database performance |
+| > 5min | Emergency | Manual intervention required |
 
 ---
 
@@ -304,6 +408,179 @@ LimitMEMLOCK=infinity
 
 ---
 
+## Database Users and Roles
+
+### User Inventory
+
+| User | Database | Host | Permissions | Used By |
+|------|----------|------|-------------|---------|
+| `gatherer` | kalshi_ts (TimescaleDB) | Gatherer | Read/Write | Gatherer |
+| `gatherer` | kalshi_meta (PostgreSQL) | Gatherer | Read/Write | Gatherer |
+| `dedup_reader` | kalshi_ts (TimescaleDB) | Gatherer | Read-only | Deduplicator |
+| `dedup_reader` | kalshi_meta (PostgreSQL) | Gatherer | Read-only | Deduplicator |
+| `deduplicator` | kalshi_prod (RDS) | RDS | Read/Write | Deduplicator |
+| `exporter` | kalshi_prod (RDS) | RDS | Read-only | S3 Exporter |
+
+### Gatherer Database Users
+
+```sql
+-- Run as postgres superuser on each gatherer
+
+-- Create gatherer user (read/write for local operations)
+CREATE USER gatherer WITH PASSWORD 'secure_password_here';
+
+-- TimescaleDB permissions
+GRANT CONNECT ON DATABASE kalshi_ts TO gatherer;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO gatherer;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO gatherer;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO gatherer;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO gatherer;
+
+-- PostgreSQL permissions
+GRANT CONNECT ON DATABASE kalshi_meta TO gatherer;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO gatherer;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO gatherer;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO gatherer;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO gatherer;
+
+-- Create dedup_reader user (read-only for deduplicator)
+CREATE USER dedup_reader WITH PASSWORD 'secure_password_here';
+
+-- TimescaleDB read-only permissions
+GRANT CONNECT ON DATABASE kalshi_ts TO dedup_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO dedup_reader;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO dedup_reader;
+
+-- PostgreSQL read-only permissions
+GRANT CONNECT ON DATABASE kalshi_meta TO dedup_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO dedup_reader;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO dedup_reader;
+```
+
+### Production RDS Users
+
+```sql
+-- Run as RDS master user
+
+-- Create deduplicator user (read/write)
+CREATE USER deduplicator WITH PASSWORD 'secure_password_here';
+GRANT CONNECT ON DATABASE kalshi_prod TO deduplicator;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO deduplicator;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO deduplicator;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO deduplicator;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO deduplicator;
+
+-- Create exporter user (read-only for S3 export)
+CREATE USER exporter WITH PASSWORD 'secure_password_here';
+GRANT CONNECT ON DATABASE kalshi_prod TO exporter;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO exporter;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO exporter;
+```
+
+### pg_hba.conf Configuration (Gatherer)
+
+```
+# /etc/postgresql/16/main/pg_hba.conf
+
+# Local connections (gatherer binary)
+local   kalshi_ts       gatherer                                scram-sha-256
+local   kalshi_meta     gatherer                                scram-sha-256
+
+# Remote connections (deduplicator)
+hostssl kalshi_ts       dedup_reader    10.0.0.0/8              scram-sha-256
+hostssl kalshi_meta     dedup_reader    10.0.0.0/8              scram-sha-256
+
+# Reject all other connections
+host    all             all             0.0.0.0/0               reject
+```
+
+### SSL Certificate Configuration
+
+For RDS connections:
+
+```bash
+# Download RDS CA bundle
+wget https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
+  -O /etc/kalshi/rds-ca-bundle.pem
+
+# Verify certificate
+openssl x509 -in /etc/kalshi/rds-ca-bundle.pem -text -noout | head -20
+```
+
+Connection string with SSL:
+
+```
+postgres://deduplicator:xxx@kalshi-prod.xxx.rds.amazonaws.com:5432/kalshi_prod?sslmode=verify-full&sslrootcert=/etc/kalshi/rds-ca-bundle.pem
+```
+
+### Password Rotation
+
+Passwords should be rotated regularly (every 90 days recommended).
+
+**Important:** PostgreSQL doesn't support multiple passwords per user. Rotation requires a brief window where apps use the new password.
+
+#### Rotation Procedure
+
+```bash
+#!/bin/bash
+# scripts/rotate-password.sh
+
+set -e
+
+SECRET_NAME="$1"  # e.g., kalshi-data/prod/rds-password
+DB_USER="$2"      # e.g., deduplicator
+DB_HOST="$3"      # e.g., kalshi-prod.xxx.rds.amazonaws.com
+
+# Step 1: Generate new password
+NEW_PASSWORD=$(openssl rand -base64 32)
+
+# Step 2: Update database user password
+PGPASSWORD="$OLD_PASSWORD" psql -h "$DB_HOST" -U admin -c \
+  "ALTER USER $DB_USER WITH PASSWORD '$NEW_PASSWORD';"
+
+# Step 3: Update secret in Secrets Manager
+aws secretsmanager update-secret \
+  --secret-id "$SECRET_NAME" \
+  --secret-string "$NEW_PASSWORD"
+
+# Step 4: Restart application to pick up new password
+# For gatherer:
+ssh gatherer-1 "sudo systemctl restart gatherer"
+ssh gatherer-2 "sudo systemctl restart gatherer"
+ssh gatherer-3 "sudo systemctl restart gatherer"
+
+# For deduplicator:
+ssh deduplicator "sudo systemctl restart deduplicator"
+
+echo "Password rotation complete for $DB_USER"
+```
+
+#### Rotation Steps (Manual)
+
+| Step | Action | Downtime |
+|------|--------|----------|
+| 1 | Generate new password | None |
+| 2 | Update DB user password | None |
+| 3 | Update Secrets Manager | None |
+| 4 | Restart applications (rolling) | ~10s per instance |
+
+**Rollback:** If rotation fails, restore old password from Secrets Manager version history:
+
+```bash
+# List versions
+aws secretsmanager list-secret-version-ids --secret-id "$SECRET_NAME"
+
+# Restore previous version
+aws secretsmanager update-secret \
+  --secret-id "$SECRET_NAME" \
+  --secret-string "$(aws secretsmanager get-secret-value \
+    --secret-id "$SECRET_NAME" \
+    --version-id "previous-version-id" \
+    --query SecretString --output text)"
+```
+
+---
+
 ## Database Initialization
 
 ### TimescaleDB (Gatherer)
@@ -320,7 +597,6 @@ CREATE TABLE trades (
     exchange_ts     BIGINT NOT NULL,
     received_at     BIGINT NOT NULL,
     ticker          VARCHAR(128) NOT NULL,
-    event_ticker    VARCHAR(128),
     price           INTEGER NOT NULL,
     size            INTEGER NOT NULL,
     taker_side      BOOLEAN NOT NULL,
@@ -333,25 +609,67 @@ SELECT create_hypertable('trades', 'received_at',
 CREATE INDEX idx_trades_ticker ON trades (ticker, received_at DESC);
 
 -- Orderbook deltas table
+-- Note: PK is (ticker, exchange_ts, price, side) for deduplication
+-- TimescaleDB requires time column in PK, so we use a composite approach
 CREATE TABLE orderbook_deltas (
-    id              BIGSERIAL,
     exchange_ts     BIGINT NOT NULL,
     received_at     BIGINT NOT NULL,
     ticker          VARCHAR(128) NOT NULL,
-    price           INTEGER NOT NULL,
     side            BOOLEAN NOT NULL,
-    delta           INTEGER NOT NULL,
+    price           INTEGER NOT NULL,
+    size_delta      INTEGER NOT NULL,
     seq             BIGINT,
     sid             BIGINT,
-    PRIMARY KEY (id, received_at)
+    PRIMARY KEY (ticker, exchange_ts, price, side)
 );
 
-SELECT create_hypertable('orderbook_deltas', 'received_at',
-    chunk_time_interval => 86400000000);
+SELECT create_hypertable('orderbook_deltas', 'exchange_ts',
+    chunk_time_interval => 3600000000);  -- 1 hour in microseconds
 
-CREATE INDEX idx_deltas_ticker ON orderbook_deltas (ticker, received_at DESC);
+CREATE INDEX idx_deltas_ticker_time ON orderbook_deltas (ticker, exchange_ts DESC);
 
--- Additional tables...
+-- Orderbook snapshots table
+CREATE TABLE orderbook_snapshots (
+    snapshot_ts     BIGINT NOT NULL,
+    exchange_ts     BIGINT,
+    ticker          VARCHAR(128) NOT NULL,
+    source          VARCHAR(8) NOT NULL,  -- 'ws' or 'rest'
+    yes_bids        JSONB NOT NULL,
+    yes_asks        JSONB NOT NULL,
+    no_bids         JSONB NOT NULL,
+    no_asks         JSONB NOT NULL,
+    best_yes_bid    INTEGER,
+    best_yes_ask    INTEGER,
+    spread          INTEGER,
+    sid             BIGINT,
+    PRIMARY KEY (ticker, snapshot_ts, source)
+);
+
+SELECT create_hypertable('orderbook_snapshots', 'snapshot_ts',
+    chunk_time_interval => 3600000000);  -- 1 hour in microseconds
+
+CREATE INDEX idx_snapshots_ticker ON orderbook_snapshots (ticker, snapshot_ts DESC);
+
+-- Tickers table
+CREATE TABLE tickers (
+    exchange_ts     BIGINT NOT NULL,
+    received_at     BIGINT NOT NULL,
+    ticker          VARCHAR(128) NOT NULL,
+    yes_bid         INTEGER,
+    yes_ask         INTEGER,
+    last_price      INTEGER,
+    volume          BIGINT,
+    open_interest   BIGINT,
+    dollar_volume   BIGINT,
+    dollar_open_interest BIGINT,
+    sid             BIGINT,
+    PRIMARY KEY (ticker, exchange_ts)
+);
+
+SELECT create_hypertable('tickers', 'exchange_ts',
+    chunk_time_interval => 3600000000);  -- 1 hour in microseconds
+
+CREATE INDEX idx_tickers_ticker_time ON tickers (ticker, exchange_ts DESC);
 ```
 
 ### PostgreSQL (Gatherer)

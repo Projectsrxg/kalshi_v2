@@ -11,6 +11,7 @@ type PollerConfig struct {
     // Polling
     PollInterval   time.Duration  // Time between poll cycles
     RequestTimeout time.Duration  // Timeout per REST request
+    Concurrency    int            // Max concurrent HTTP requests
 
     // API
     BaseURL string  // REST API base URL
@@ -23,15 +24,26 @@ type PollerConfig struct {
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `PollInterval` | `time.Duration` | `1 * time.Minute` | Time between polling cycles |
+| `PollInterval` | `time.Duration` | `15 * time.Minute` | Time between polling cycles |
 | `RequestTimeout` | `time.Duration` | `30 * time.Second` | Timeout for each REST request |
+| `Concurrency` | `int` | `100` | Max concurrent HTTP requests per poll cycle |
 | `BaseURL` | `string` | `https://api.elections.kalshi.com/trade-api/v2` | Kalshi REST API base URL |
+
+### Concurrency
+
+Always use max concurrency (100) to poll all markets as fast as possible:
+
+| Concurrency | Avg Latency | Markets/15min |
+|-------------|-------------|---------------|
+| 100 | 100ms | ~900,000 |
+| 100 | 50ms | ~1,800,000 |
 
 ### Environment Variables
 
 ```bash
-POLLER_POLL_INTERVAL=60s      # Polling interval
+POLLER_POLL_INTERVAL=15m      # Polling interval
 POLLER_REQUEST_TIMEOUT=30s    # Per-request timeout
+POLLER_CONCURRENCY=100        # Max concurrent requests
 KALSHI_REST_URL=https://api.elections.kalshi.com/trade-api/v2
 ```
 
@@ -39,8 +51,9 @@ KALSHI_REST_URL=https://api.elections.kalshi.com/trade-api/v2
 
 ```go
 cfg := PollerConfig{
-    PollInterval:   1 * time.Minute,
+    PollInterval:   15 * time.Minute,
     RequestTimeout: 30 * time.Second,
+    Concurrency:    100,
     BaseURL:        "https://api.elections.kalshi.com/trade-api/v2",
 }
 ```
@@ -100,7 +113,7 @@ func newPollerMetrics() *PollerMetrics {
         PollDuration: promauto.NewHistogram(prometheus.HistogramOpts{
             Name:    "poller_poll_duration_seconds",
             Help:    "Duration of poll cycle in seconds",
-            Buckets: []float64{1, 5, 10, 30, 60, 120},
+            Buckets: []float64{60, 120, 300, 600, 900, 1200},
         }),
     }
 }
@@ -125,7 +138,7 @@ func newPollerMetrics() *PollerMetrics {
 ### Log Examples
 
 ```
-level=INFO msg="snapshot poller started" component=snapshot-poller poll_interval=1m0s
+level=INFO msg="snapshot poller started" component=snapshot-poller poll_interval=15m0s
 level=DEBUG msg="poll cycle complete" component=snapshot-poller markets=500 fetched=498 errors=2 duration=45.2s
 level=WARN msg="failed to fetch orderbook" component=snapshot-poller ticker=EXAMPLE-TICKER err="unexpected status: 404"
 level=INFO msg="stopping snapshot poller" component=snapshot-poller
@@ -140,9 +153,9 @@ level=INFO msg="snapshot poller stopped" component=snapshot-poller
 
 | Scenario | Recommended | Notes |
 |----------|-------------|-------|
-| Standard | 1 minute | Default, matches 1-minute resolution requirement |
-| High reliability | 30 seconds | More frequent backup, higher API load |
-| Low priority | 5 minutes | Reduced API load, coarser backup |
+| Standard | 15 minutes | Default, balances coverage and API load |
+| High reliability | 5 minutes | More frequent backup |
+| Low priority | 30 minutes | Reduced API load, coarser backup |
 
 ### Request Timeout
 
@@ -170,12 +183,12 @@ level=INFO msg="snapshot poller stopped" component=snapshot-poller
 
 # Poll cycle too slow
 - alert: PollerSlowCycle
-  expr: poller_poll_duration_seconds > 55
+  expr: poller_poll_duration_seconds > 900
   for: 2m
   labels:
     severity: warning
   annotations:
-    summary: "Poll cycle approaching interval limit"
+    summary: "Poll cycle approaching 15-minute interval limit"
 
 # No markets being polled
 - alert: PollerNoMarkets

@@ -39,11 +39,11 @@ Capture and store every orderbook change and trade across all Kalshi markets in 
 
 ### WebSocket
 
-| Constraint | Value | Notes |
-|------------|-------|-------|
-| Subscription limit per connection | TBD | Need to test empirically |
-| Message throughput | TBD | Depends on market activity |
-| Heartbeat interval | 10s | Must respond to pings |
+| Constraint | Value | Notes                             |
+|------------|-------|-----------------------------------|
+| Subscription limit per connection | 7,500 | Per Kalshi WebSocket API          |
+| Message throughput | 2000  | Max 2000/s across all connections |
+| Heartbeat interval | 10s   | Must respond to pings             |
 
 ### REST API
 
@@ -194,16 +194,15 @@ Production:
 
 ### Volume Estimates
 
-| Metric | Conservative | Peak |
-|--------|--------------|------|
-| Active markets | 10,000 | 100,000 |
-| Deltas/market/day | 1,000 | 100,000 |
-| Trades/market/day | 100 | 10,000 |
+| Metric | Low | High |
+|--------|-----|------|
+| Active markets | 200,000 | 600,000 |
+| Deltas/market/day | 100 | 10,000 |
+| Trades/market/day | 10 | 1,000 |
 | Delta size | ~100 bytes | ~100 bytes |
 | Trade size | ~150 bytes | ~150 bytes |
 
-**Conservative daily**: 10K markets × 1K deltas × 100B = **1 GB/day**
-**Peak daily**: 100K markets × 100K deltas × 100B = **1 TB/day**
+**Daily estimates vary significantly based on market activity.**
 
 ### Chosen Solution
 

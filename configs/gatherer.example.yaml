@@ -1,0 +1,56 @@
+# Gatherer Configuration Example
+# Copy to gatherer.local.yaml and customize for local development
+
+# Instance identification
+instance:
+  id: gatherer-1
+  az: us-east-1a
+
+# Kalshi API configuration
+api:
+  rest_url: https://demo-api.kalshi.co/trade-api/v2
+  ws_url: wss://demo-api.kalshi.co
+  # For production, use:
+  # rest_url: https://api.elections.kalshi.com/trade-api/v2
+  # ws_url: wss://api.elections.kalshi.com
+
+# Database connections
+database:
+  postgres:
+    host: localhost
+    port: 5432
+    name: kalshi_gatherer
+    user: ${POSTGRES_USER}
+    password: ${POSTGRES_PASSWORD}
+    max_conns: 10
+  timescale:
+    host: localhost
+    port: 5432
+    name: kalshi_timeseries
+    user: ${TIMESCALE_USER}
+    password: ${TIMESCALE_PASSWORD}
+    max_conns: 20
+
+# Connection Manager settings
+connections:
+  orderbook_count: 144
+  markets_per_connection: 250
+  global_count: 6
+  reconnect_base_delay: 1s
+  reconnect_max_delay: 60s
+
+# Writer settings
+writers:
+  batch_size: 1000
+  flush_interval: 1s
+  buffer_size: 10000
+
+# Snapshot Poller settings
+poller:
+  interval: 15m
+  concurrency: 10
+
+# Metrics server
+metrics:
+  port: 9090
+  path: /metrics

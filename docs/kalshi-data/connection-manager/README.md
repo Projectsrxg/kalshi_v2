@@ -65,6 +65,50 @@ flowchart LR
     C7 & C150 -->|per-market| OB[Orderbook Data]
 ```
 
+### Connection ID Assignment
+
+Connection IDs are assigned at startup and remain fixed:
+
+```go
+type ConnectionManager struct {
+    connections map[int]*WebSocketClient
+}
+
+func NewConnectionManager(cfg Config) *ConnectionManager {
+    cm := &ConnectionManager{
+        connections: make(map[int]*WebSocketClient, 150),
+    }
+
+    // Reserved connections (fixed assignment)
+    cm.connections[1] = newClient("ticker-1")     // Ticker (primary)
+    cm.connections[2] = newClient("ticker-2")     // Ticker (backup)
+    cm.connections[3] = newClient("trade-1")      // Trade (primary)
+    cm.connections[4] = newClient("trade-2")      // Trade (backup)
+    cm.connections[5] = newClient("lifecycle-1")  // Lifecycle (primary)
+    cm.connections[6] = newClient("lifecycle-2")  // Lifecycle (backup)
+
+    // Orderbook connections (dynamic assignment per market)
+    for i := 7; i <= 150; i++ {
+        cm.connections[i] = newClient(fmt.Sprintf("orderbook-%d", i))
+    }
+
+    return cm
+}
+```
+
+### Redundancy Strategy
+
+| Channel | Connections | Strategy | Failure Handling |
+|---------|-------------|----------|------------------|
+| `ticker` | 2 | Both subscribe to all markets | If 1 fails, other has full data |
+| `trade` | 2 | Both subscribe to all trades | If 1 fails, other has full data |
+| `market_lifecycle` | 2 | Both subscribe to all markets | If 1 fails, other has full data |
+| `orderbook_delta` | 144 | Each market assigned to 1 connection | Reconnect and re-subscribe |
+
+**Orderbook capacity:**
+- 144 connections × 7,500 markets/connection = **1,080,000 markets max per gatherer**
+- Current active markets fluctuate between 200K-600K, well within capacity
+
 ---
 
 ## Subscription Model

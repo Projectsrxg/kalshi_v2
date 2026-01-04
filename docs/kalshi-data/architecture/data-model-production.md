@@ -57,11 +57,11 @@ erDiagram
     orderbook_deltas {
         bigint received_at
         bigint exchange_ts
-        bigint sequence_num
-        varchar ticker
-        boolean side
-        int price
+        varchar ticker PK
+        boolean side PK
+        int price PK
         int size_delta
+        bigint seq
     }
 
     orderbook_snapshots {
@@ -93,6 +93,45 @@ erDiagram
         bigint open_interest
     }
 ```
+
+---
+
+## Schema Differences: Gatherer vs Production
+
+The production schema intentionally excludes some columns present in gatherer databases:
+
+| Column | Gatherer | Production | Reason |
+|--------|----------|------------|--------|
+| `sid` | Present | **Excluded** | Subscription ID is gatherer-specific; not meaningful after deduplication |
+| `event_ticker` (trades) | Nullable | **Excluded** | Not populated by gatherer; can be JOINed from markets table |
+
+### Why `sid` is Excluded
+
+The `sid` (Subscription ID) column identifies which WebSocket subscription produced each record:
+
+1. **Gatherer-local meaning**: Each gatherer assigns its own `sid` values when establishing subscriptions
+2. **Cross-gatherer inconsistency**: The same market on different gatherers has different `sid` values
+3. **Post-deduplication irrelevance**: After merging data from 3 gatherers, `sid` loses meaning
+
+```
+Gatherer 1: sid = 100 for ticker "BTCUSD"
+Gatherer 2: sid = 200 for ticker "BTCUSD"
+Gatherer 3: sid = 150 for ticker "BTCUSD"
+
+Production: All three records for "BTCUSD" are deduplicated.
+            Which sid should be stored? Answer: None.
+```
+
+### Storage Savings
+
+Excluding `sid` saves ~8 bytes per row:
+
+| Table | Rows/Day | Savings/Day |
+|-------|----------|-------------|
+| trades | 1M | 8 MB |
+| orderbook_deltas | 10M | 80 MB |
+| tickers | 1M | 8 MB |
+| **Total** | | **~96 MB/day** |
 
 ---
 
@@ -205,11 +244,7 @@ CREATE TABLE markets (
     CONSTRAINT valid_market_type CHECK (market_type IN ('binary', 'scalar'))
 );
 
--- Status mapping from gatherer (8 statuses) to production (4 statuses):
--- initialized, inactive     -> unopened
--- active                    -> open
--- closed, disputed          -> closed
--- determined, amended, finalized -> settled
+-- Status mapping: see data-model.md "Production Status (4 values) — Authoritative Mapping"
 
 CREATE INDEX idx_markets_event ON markets(event_ticker);
 CREATE INDEX idx_markets_status ON markets(market_status);
@@ -232,7 +267,6 @@ CREATE TABLE trades (
 
     -- Market
     ticker          VARCHAR(128) NOT NULL,
-    event_ticker    VARCHAR(128),
 
     -- Trade data
     price           INTEGER NOT NULL,      -- 0-100,000 (hundred-thousandths)
@@ -244,7 +278,6 @@ SELECT create_hypertable('trades', 'exchange_ts',
     chunk_time_interval => 86400000000);  -- 1 day in µs
 
 CREATE INDEX idx_trades_ticker_time ON trades(ticker, exchange_ts DESC);
-CREATE INDEX idx_trades_event_time ON trades(event_ticker, exchange_ts DESC);
 
 -- Compression after 7 days
 ALTER TABLE trades SET (
@@ -264,9 +297,6 @@ CREATE TABLE orderbook_deltas (
     exchange_ts     BIGINT NOT NULL,       -- Kalshi exchange timestamp
     received_at     BIGINT NOT NULL,       -- When gatherer received
 
-    -- Sequence
-    seq             BIGINT NOT NULL,       -- Kalshi sequence number
-
     -- Market
     ticker          VARCHAR(128) NOT NULL,
 
@@ -275,8 +305,16 @@ CREATE TABLE orderbook_deltas (
     price           INTEGER NOT NULL,      -- 0-100,000
     size_delta      INTEGER NOT NULL,      -- Positive = add, negative = remove
 
-    PRIMARY KEY (ticker, exchange_ts, seq, price, side)
+    -- Metadata (not part of deduplication key)
+    seq             BIGINT,                -- Kalshi sequence number (per-subscription, for gap detection)
+
+    PRIMARY KEY (ticker, exchange_ts, price, side)
 );
+
+-- Note: seq is NOT part of the primary key because it is per-subscription (sid).
+-- Two gatherers receiving the same delta will have different seq values.
+-- Deduplication uses (ticker, exchange_ts, price, side) which uniquely identifies
+-- a price level change at a specific time.
 
 SELECT create_hypertable('orderbook_deltas', 'exchange_ts',
     chunk_time_interval => 86400000000);  -- 1 day in µs
@@ -295,7 +333,7 @@ SELECT add_compression_policy('orderbook_deltas', INTERVAL '7 days');
 
 ### orderbook_snapshots
 
-Stores both WebSocket snapshots and 1-minute REST API snapshots.
+Stores both WebSocket snapshots and 15-minute REST API snapshots.
 
 ```sql
 CREATE TABLE orderbook_snapshots (
@@ -384,7 +422,7 @@ Uses Kalshi's exchange-provided identifiers for deduplication. All inserts use `
 | Table | Primary Key | Source |
 |-------|-------------|--------|
 | `trades` | `trade_id` | Kalshi trade ID |
-| `orderbook_deltas` | `(ticker, exchange_ts, seq, price, side)` | Kalshi timestamp + sequence |
+| `orderbook_deltas` | `(ticker, exchange_ts, price, side)` | Kalshi timestamp + price level |
 | `orderbook_snapshots` | `(ticker, snapshot_ts, source)` | Snapshot timestamp + source |
 | `tickers` | `(ticker, exchange_ts)` | Kalshi timestamp |
 | `markets` | `ticker` | Upsert (DO UPDATE) |
@@ -424,4 +462,4 @@ SELECT add_retention_policy('tickers', INTERVAL '30 days');
 
 **Daily total (compressed):** ~355 MB/day
 
-**Note:** orderbook_snapshots is the largest table due to 1-minute REST polling.
+**Note:** orderbook_snapshots is the largest table due to 15-minute REST polling across 3 gatherers.

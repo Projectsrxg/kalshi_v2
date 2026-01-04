@@ -390,7 +390,7 @@ Step-by-step procedures for common recovery scenarios.
 
 4. **Verify snapshot coverage**
    ```bash
-   # REST snapshots should be every ~1 minute
+   # REST snapshots should be every ~15 minutes
    psql -h prod-rds -d kalshi_prod -c \
      "SELECT ticker, COUNT(*), MAX(snapshot_ts)
       FROM orderbook_snapshots

@@ -21,7 +21,7 @@ flowchart TD
     end
 
     subgraph "Recovery"
-        REST[REST Snapshot<br/>1-min polling]
+        REST[REST Snapshot<br/>15-min polling]
         DEDUP[Cross-Gatherer<br/>Deduplication]
     end
 
@@ -115,7 +115,7 @@ Writers can use this information for logging and metrics but do not attempt reco
 
 ### 1. REST Snapshot Polling
 
-Snapshot Poller fetches orderbook snapshots every 1 minute for all active markets:
+Snapshot Poller fetches orderbook snapshots every 15 minutes for all active markets:
 
 ```mermaid
 sequenceDiagram
@@ -123,7 +123,7 @@ sequenceDiagram
     participant REST as Kalshi REST
     participant DB as Database
 
-    loop Every 1 minute
+    loop Every 15 minutes
         SP->>REST: GET /markets/{ticker}/orderbook
         REST-->>SP: Full orderbook
         SP->>DB: INSERT (source='rest')
@@ -131,7 +131,7 @@ sequenceDiagram
 ```
 
 **Characteristics:**
-- 1-minute resolution (maximum gap window)
+- 15-minute resolution (maximum gap window)
 - Independent of WebSocket state
 - Stored with `source='rest'` to differentiate from WS
 
@@ -221,7 +221,7 @@ Trades have unique `trade_id` from Kalshi. If one gatherer misses a trade:
 Orderbook deltas are cumulative. A gap means:
 
 - Current orderbook state is unknown until next snapshot
-- REST polling provides 1-minute snapshot backup
+- REST polling provides 15-minute snapshot backup
 - Can reconstruct state from snapshot + subsequent deltas
 
 ---
@@ -278,7 +278,7 @@ See [Message Router Configuration](../message-router/configuration.md) for detai
 
 ```go
 type SnapshotPollerConfig struct {
-    PollInterval time.Duration  // Default: 1 minute
+    PollInterval time.Duration  // Default: 15 minutes
 }
 ```
 
@@ -344,7 +344,7 @@ The platform does NOT actively fetch missing data on gap detection:
 | Passive (current) | Simple, robust | Relies on backup sources |
 
 **Rationale:**
-1. REST snapshot polling provides 1-minute backup
+1. REST snapshot polling provides 15-minute backup
 2. Other gatherers fill gaps via deduplication
 3. Active fetching adds complexity and potential for cascading failures
 4. Most gaps are filled automatically within seconds
@@ -366,3 +366,53 @@ if seq != last+1 {
 2. Missing data is recovered through other mechanisms
 3. Alerting via metrics allows investigation
 4. Simplicity improves reliability
+
+---
+
+## Auto-Recovery Summary
+
+The platform uses **passive recovery** - no active fetching on gap detection. Gaps are filled automatically through two independent mechanisms:
+
+```mermaid
+flowchart TD
+    GAP[Sequence Gap<br/>Detected] --> LOG[Log Warning<br/>Inc Metric]
+    LOG --> CONTINUE[Continue<br/>Processing]
+
+    subgraph "Automatic Recovery (Background)"
+        REST[REST Poller<br/>Every 15 min]
+        DEDUP[Deduplicator<br/>Real-time]
+    end
+
+    REST --> FILL[Gap Filled<br/>in Production]
+    DEDUP --> FILL
+```
+
+### Recovery Timeline
+
+| Time After Gap | Recovery Source | Data Recovered |
+|----------------|-----------------|----------------|
+| 0-5 seconds | Other gatherers via deduplicator | Trades, deltas, tickers |
+| 15 minutes | REST snapshot polling | Orderbook state |
+
+### Why This Works
+
+1. **Cross-gatherer redundancy**: 3 gatherers independently collect all data. A gap on one is filled by others via deduplicator (real-time)
+2. **REST snapshots**: Provide orderbook state recovery every 15 minutes, independent of WebSocket state
+3. **Exchange-level deduplication keys**: `trade_id`, `(ticker, exchange_ts, price, side)` ensure duplicates are handled automatically
+
+### Operator Actions
+
+Gaps are **informational only** - no operator intervention required unless:
+
+| Condition | Action |
+|-----------|--------|
+| Gap rate > 0.1/s sustained | Check network, connection health |
+| All 3 gatherers show gaps for same market | Check if market is in unusual state |
+| REST poll failures concurrent with gaps | Check API availability |
+
+Gaps are expected during:
+- WebSocket reconnections
+- Network blips
+- High-volume market activity
+
+These are handled automatically and do not require intervention.

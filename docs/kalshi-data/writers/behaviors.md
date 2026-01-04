@@ -88,7 +88,6 @@ func (w *TradeWriter) transform(msg TradeMsg) tradeRow {
 
 **Notes:**
 - `NoPriceDollars` is not stored separately. In binary markets, YES price + NO price = $1.00, so NO price can be derived: `100000 - price`.
-- `event_ticker` exists in schema but is not populated by gatherer (nullable, for future use).
 
 ### Orderbook Delta
 
@@ -328,9 +327,9 @@ ON CONFLICT (trade_id) DO NOTHING
 ### orderbook_deltas
 
 ```sql
-INSERT INTO orderbook_deltas (exchange_ts, received_at, seq, ticker, side, price, size_delta, sid)
+INSERT INTO orderbook_deltas (exchange_ts, received_at, ticker, side, price, size_delta, seq, sid)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-ON CONFLICT (ticker, exchange_ts, seq, price, side) DO NOTHING
+ON CONFLICT (ticker, exchange_ts, price, side) DO NOTHING
 ```
 
 ### orderbook_snapshots
@@ -384,5 +383,5 @@ func (w *OrderbookWriter) handleMessage(msg OrderbookMsg) {
 ```
 
 Writers don't trigger recovery - that's handled by:
-1. REST Snapshot Poller (1-minute polling)
+1. REST Snapshot Poller (15-minute polling)
 2. Deduplicator (merges from 3 gatherers)

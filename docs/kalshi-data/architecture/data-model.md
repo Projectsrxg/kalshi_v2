@@ -59,11 +59,11 @@ erDiagram
     orderbook_deltas {
         varchar ticker PK
         bigint exchange_ts PK
-        bigint seq PK
         int price PK
         boolean side PK
         int size_delta
         bigint received_at
+        bigint seq
     }
 
     orderbook_snapshots {
@@ -235,12 +235,12 @@ CREATE INDEX idx_markets_status ON markets(market_status, trading_status);
 
 The Kalshi API uses two different status representations:
 
-#### 1. Market Status (stored field)
+#### 1. Gatherer Status (8 values)
 
-The `market_status` field contains the granular lifecycle state:
+The gatherer stores the granular `market_status` from Kalshi API:
 
-| Status | Description |
-|--------|-------------|
+| Gatherer Status | Description |
+|-----------------|-------------|
 | `initialized` | Market created, not yet active |
 | `inactive` | Temporarily inactive |
 | `active` | Open for trading |
@@ -250,16 +250,18 @@ The `market_status` field contains the granular lifecycle state:
 | `amended` | Settlement amended |
 | `finalized` | Fully settled, final |
 
-#### 2. Production Status (simplified)
+#### 2. Production Status (4 values) — Authoritative Mapping
 
-The production database uses simplified statuses. Deduplicator maps gatherer statuses:
+The deduplicator converts gatherer statuses to simplified production statuses when writing to production RDS:
 
-| Production Status | Gatherer Statuses |
-|-------------------|-------------------|
-| `unopened` | `initialized`, `inactive` |
-| `open` | `active` |
-| `closed` | `closed`, `disputed` |
-| `settled` | `determined`, `amended`, `finalized` |
+| Production Status | Gatherer Statuses | Description |
+|-------------------|-------------------|-------------|
+| `unopened` | `initialized`, `inactive` | Not yet tradeable |
+| `open` | `active` | Currently tradeable |
+| `closed` | `closed`, `disputed` | Trading ended, not yet settled |
+| `settled` | `determined`, `amended`, `finalized` | Final outcome known |
+
+**Implementation:** The deduplicator performs this mapping in the `syncMarkets()` function before upserting to production.
 
 ---
 
@@ -277,7 +279,6 @@ CREATE TABLE trades (
 
     -- Market
     ticker          VARCHAR(128) NOT NULL,
-    event_ticker    VARCHAR(128),          -- Nullable, not populated by gatherer
 
     -- Trade data
     price           INTEGER NOT NULL,      -- 0-100,000 (hundred-thousandths)
@@ -311,9 +312,6 @@ CREATE TABLE orderbook_deltas (
     exchange_ts     BIGINT NOT NULL,       -- Kalshi exchange timestamp
     received_at     BIGINT NOT NULL,       -- When gatherer received
 
-    -- Sequence
-    seq             BIGINT NOT NULL,       -- Kalshi sequence number
-
     -- Market
     ticker          VARCHAR(128) NOT NULL,
 
@@ -322,11 +320,17 @@ CREATE TABLE orderbook_deltas (
     price           INTEGER NOT NULL,      -- 0-100,000
     size_delta      INTEGER NOT NULL,      -- Positive = add, negative = remove
 
-    -- Metadata
+    -- Metadata (not part of deduplication key)
+    seq             BIGINT,                -- Kalshi sequence number (per-subscription, for gap detection)
     sid             BIGINT,                -- Subscription ID for debugging
 
-    PRIMARY KEY (ticker, exchange_ts, seq, price, side)
+    PRIMARY KEY (ticker, exchange_ts, price, side)
 );
+
+-- Note: seq is NOT part of the primary key because it is per-subscription (sid).
+-- Two gatherers receiving the same delta will have different seq values.
+-- Deduplication uses (ticker, exchange_ts, price, side) which uniquely identifies
+-- a price level change at a specific time.
 
 SELECT create_hypertable('orderbook_deltas', 'exchange_ts',
     chunk_time_interval => 3600000000);  -- 1 hour in µs
@@ -346,7 +350,7 @@ SELECT add_retention_policy('orderbook_deltas', INTERVAL '7 days');
 
 ### orderbook_snapshots
 
-Full orderbook state from WebSocket snapshots and 1-minute REST polling.
+Full orderbook state from WebSocket snapshots and 15-minute REST polling.
 
 ```sql
 CREATE TABLE orderbook_snapshots (
@@ -445,7 +449,7 @@ Uses Kalshi's exchange-provided identifiers for deduplication:
 | Table | Primary Key | Conflict Handling |
 |-------|-------------|-------------------|
 | `trades` | `trade_id` | `ON CONFLICT DO NOTHING` |
-| `orderbook_deltas` | `(ticker, exchange_ts, seq, price, side)` | `ON CONFLICT DO NOTHING` |
+| `orderbook_deltas` | `(ticker, exchange_ts, price, side)` | `ON CONFLICT DO NOTHING` |
 | `orderbook_snapshots` | `(ticker, snapshot_ts, source)` | `ON CONFLICT DO NOTHING` |
 | `tickers` | `(ticker, exchange_ts)` | `ON CONFLICT DO NOTHING` |
 | `markets` | `ticker` | `ON CONFLICT DO UPDATE` |

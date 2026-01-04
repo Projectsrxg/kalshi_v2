@@ -239,7 +239,7 @@ During reconnection, data is missed on that connection:
 
 | Data Type | Backup Source | Resolution |
 |-----------|---------------|------------|
-| Orderbook | REST snapshot polling | 1 minute |
+| Orderbook | REST snapshot polling | 15 minutes |
 | Orderbook | Other gatherers | Real-time |
 | Trades | Other gatherers | Real-time |
 | Ticker | Other gatherers | Real-time |

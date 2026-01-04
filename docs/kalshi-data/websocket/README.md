@@ -2,6 +2,8 @@
 
 Low-level WebSocket client for connecting to Kalshi's WebSocket API. Used by Connection Manager.
 
+> **Implementation:** `internal/api/` package (combined REST + WebSocket client)
+
 ---
 
 ## Responsibilities

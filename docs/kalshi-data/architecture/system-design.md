@@ -151,16 +151,16 @@ Manages WebSocket connection pool.
 
 ### Snapshot Poller
 
-Polls REST API for orderbook snapshots every 1 minute as backup data source.
+Polls REST API for orderbook snapshots every 15 minutes as backup data source.
 
 | Responsibility | Details |
 |----------------|---------|
 | Market list | Gets subscribed markets from Market Registry |
-| Polling interval | Every 1 minute |
+| Polling interval | Every 15 minutes |
 | REST endpoint | `GET /markets/{ticker}/orderbook` |
 | Output | Writes to `orderbook_snapshots` with `source = 'rest'` |
 
-**Purpose:** Ensures at least 1-minute resolution orderbook data even if WebSocket deltas are missed.
+**Purpose:** Ensures 15-minute resolution orderbook backup even if WebSocket deltas are missed.
 
 ### Message Router
 

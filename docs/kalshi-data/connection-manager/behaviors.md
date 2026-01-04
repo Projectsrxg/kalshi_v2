@@ -406,5 +406,5 @@ func (m *manager) checkSequence(sid int64, seq int64) (seqGap bool, gapSize int)
 ```
 
 **On gap detection:** Log warning and continue. No resubscription. Backup data sources:
-- REST snapshot polling (1-minute resolution)
+- REST snapshot polling (15-minute resolution)
 - Deduplicator pulls from other gatherers

@@ -8,7 +8,7 @@ Polling loop, REST API calls, and response parsing for Snapshot Poller.
 
 ```mermaid
 flowchart TD
-    START[Start] --> TICKER[Create 1-min Ticker]
+    START[Start] --> TICKER[Create 15-min Ticker]
     TICKER --> WAIT{Wait for tick<br/>or cancel}
     WAIT -->|tick| MARKETS[Get active markets]
     WAIT -->|cancel| EXIT[Exit]
@@ -51,7 +51,9 @@ func (p *snapshotPoller) run() {
 }
 ```
 
-### Poll All Markets
+### Poll All Markets (Concurrent)
+
+The poller uses a worker pool with configurable concurrency to fetch orderbooks in parallel.
 
 ```go
 func (p *snapshotPoller) pollAll() {
@@ -65,42 +67,73 @@ func (p *snapshotPoller) pollAll() {
         return
     }
 
-    var fetched, errors int
+    // Use semaphore for bounded concurrency
+    sem := make(chan struct{}, p.cfg.Concurrency) // Default: 100 concurrent requests
+    var wg sync.WaitGroup
+    var fetched, errors atomic.Int64
+
     for _, market := range markets {
-        snapshot, err := p.fetchOrderbook(market.Ticker)
-        if err != nil {
-            p.logger.Warn("failed to fetch orderbook",
-                "ticker", market.Ticker,
-                "err", err,
-            )
-            p.metrics.FetchErrors.Inc()
-            errors++
-            continue
-        }
+        wg.Add(1)
+        go func(ticker string) {
+            defer wg.Done()
 
-        if err := p.writer.Write(snapshot); err != nil {
-            p.logger.Warn("failed to write snapshot",
-                "ticker", market.Ticker,
-                "err", err,
-            )
-            p.metrics.WriteErrors.Inc()
-            errors++
-            continue
-        }
+            // Acquire semaphore slot
+            select {
+            case sem <- struct{}{}:
+                defer func() { <-sem }()
+            case <-p.ctx.Done():
+                return
+            }
 
-        fetched++
+            snapshot, err := p.fetchOrderbook(ticker)
+            if err != nil {
+                p.logger.Warn("failed to fetch orderbook",
+                    "ticker", ticker,
+                    "err", err,
+                )
+                p.metrics.FetchErrors.Inc()
+                errors.Add(1)
+                return
+            }
+
+            if err := p.writer.Write(snapshot); err != nil {
+                p.logger.Warn("failed to write snapshot",
+                    "ticker", ticker,
+                    "err", err,
+                )
+                p.metrics.WriteErrors.Inc()
+                errors.Add(1)
+                return
+            }
+
+            fetched.Add(1)
+        }(market.Ticker)
     }
 
-    p.metrics.SnapshotsFetched.Add(float64(fetched))
+    wg.Wait()
+
+    p.metrics.SnapshotsFetched.Add(float64(fetched.Load()))
     p.metrics.PollDuration.Observe(time.Since(start).Seconds())
 
     p.logger.Debug("poll cycle complete",
         "markets", len(markets),
-        "fetched", fetched,
-        "errors", errors,
+        "fetched", fetched.Load(),
+        "errors", errors.Load(),
         "duration", time.Since(start),
     )
 }
+```
+
+### Concurrency Scaling
+
+Always uses max concurrency (100 concurrent requests) to poll all markets as fast as possible within 15-minute cycles.
+
+| Concurrency | Avg Latency | Markets/15min | Time for 1M |
+|-------------|-------------|---------------|-------------|
+| 100 | 100ms | 900,000 | ~17 min |
+| 100 | 50ms | 1,800,000 | ~8 min |
+
+**Formula**: `time_to_poll_all = market_count / (concurrency × (1s / avg_latency))`
 ```
 
 ---
@@ -244,7 +277,7 @@ RESTOrderbookSnapshot{
 | Writer error | Log, skip market | `write_errors_total` |
 | Context cancelled | Exit loop | None |
 
-**No retry logic**: Failed fetches wait for the next 1-minute poll cycle. With 3 gatherers polling independently, coverage is maintained.
+**No retry logic**: Failed fetches wait for the next 15-minute poll cycle. With 3 gatherers polling independently, coverage is maintained.
 
 ---
 
@@ -253,19 +286,73 @@ RESTOrderbookSnapshot{
 Per Kalshi API documentation, **read operations are not rate-limited**. Only order operations (writes) have rate limits.
 
 However, the poller is naturally rate-limited:
-- 1-minute poll interval
-- Sequential market fetching (not concurrent by default)
+- 15-minute poll interval
+- Max concurrency (100 concurrent requests)
 
 ## Scalability
 
-**Current design**: Sequential fetching works for moderate market counts (~1000 markets × ~100ms = ~100 seconds).
+**Design**: Concurrent fetching with semaphore-based worker pool (see [Poll All Markets](#poll-all-markets-concurrent)).
 
-**At scale (1M markets)**: Sequential polling cannot complete within a 1-minute cycle. Options:
+| Concurrency | Markets/15min | Memory Overhead |
+|-------------|---------------|-----------------|
+| 100 | ~900,000 | ~10 MB (goroutine stacks) |
 
-| Approach | Trade-off |
-|----------|-----------|
-| Concurrent fetching with semaphore | Requires worker pool, increases complexity |
-| Priority-based polling | Poll high-activity markets more frequently |
-| Skip REST polling entirely | Rely on WebSocket snapshots + deltas only |
+**At 1M markets**: Polling takes ~17 minutes at 100ms latency, slightly exceeding the 15-minute interval. This is acceptable since WebSocket deltas are the primary data source and 3-gatherer redundancy provides coverage.
 
-**Recommendation**: For 1M markets, REST snapshot polling becomes impractical. The WebSocket pipeline (subscription snapshots + deltas) should be the primary data source, with REST polling limited to gap recovery for specific markets on-demand rather than periodic full sweeps.
+---
+
+## Deduplication Semantics
+
+### Snapshot Timestamp (`snapshot_ts`)
+
+REST snapshots use the gatherer's local time as `snapshot_ts`:
+
+```go
+SnapshotTs: time.Now().UnixMicro(),  // Gatherer-local time
+```
+
+**Important:** This is NOT the exchange timestamp (which REST API doesn't provide for orderbooks). It's the observation time from the gatherer's perspective.
+
+### Multi-Gatherer Behavior
+
+With 3 gatherers polling every 15 minutes:
+
+| Gatherer | Poll Time | `snapshot_ts` |
+|----------|-----------|---------------|
+| Gatherer 1 | 12:00:00.123456 | 1704110400123456 |
+| Gatherer 2 | 12:00:00.234567 | 1704110400234567 |
+| Gatherer 3 | 12:00:00.345678 | 1704110400345678 |
+
+Each produces a **distinct** snapshot (different `snapshot_ts`). The primary key `(ticker, snapshot_ts, source)` ensures all 3 are stored.
+
+### Intentional Non-Deduplication
+
+REST snapshots from different gatherers are **not deduplicated** in production. This is intentional:
+
+1. **Different observation times** - Each snapshot represents the orderbook state at a slightly different moment (±seconds between gatherers)
+2. **Redundancy** - If one gatherer misses a poll cycle, others provide coverage
+3. **3x sampling rate** - Effective 5-minute resolution instead of 15-minute
+
+### Deduplicator Handling
+
+The deduplicator writes all REST snapshots with `ON CONFLICT DO NOTHING`:
+
+```sql
+INSERT INTO orderbook_snapshots (ticker, snapshot_ts, source, ...)
+VALUES ($1, $2, 'rest', ...)
+ON CONFLICT (ticker, snapshot_ts, source) DO NOTHING;
+```
+
+Since each gatherer has a unique `snapshot_ts`, conflicts only occur if:
+- Same gatherer sends the same snapshot twice (rare, indicates bug)
+- Clock sync issues cause identical microsecond timestamps (extremely rare)
+
+### Storage Impact
+
+| Gatherers | Snapshots/Market/Hour | Daily per 1K Markets |
+|-----------|----------------------|----------------------|
+| 1 | 4 | ~400 MB (uncompressed) |
+| 3 | 12 | ~1.2 GB (uncompressed) |
+| 3 (compressed) | 12 | ~120 MB |
+
+The 3x multiplier is acceptable given storage is cheap and compression is effective.

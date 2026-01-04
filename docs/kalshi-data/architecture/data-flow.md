@@ -187,7 +187,7 @@ sequenceDiagram
 
 ## Stage 1.5: REST Snapshot Polling
 
-Every 1 minute, poll orderbook snapshots for all subscribed markets as backup.
+Every 15 minutes, poll orderbook snapshots for all subscribed markets as backup.
 
 ```mermaid
 sequenceDiagram
@@ -197,7 +197,7 @@ sequenceDiagram
     participant SW as Snapshot Writer
     participant TS as TimescaleDB
 
-    loop Every 1 minute
+    loop Every 15 minutes
         SP->>MR: Get subscribed markets
         MR-->>SP: Market list
         loop For each market
@@ -209,7 +209,7 @@ sequenceDiagram
     end
 ```
 
-**Purpose:** Ensures at least 1-minute resolution orderbook data even if WebSocket deltas are missed.
+**Purpose:** Ensures 15-minute resolution orderbook backup even if WebSocket deltas are missed.
 
 ---
 
@@ -267,7 +267,7 @@ sequenceDiagram
 
 | Data Type | Unique Key |
 |-----------|------------|
-| Orderbook deltas | `(ticker, exchange_ts, seq, price, side)` |
+| Orderbook deltas | `(ticker, exchange_ts, price, side)` |
 | Orderbook snapshots | `(ticker, snapshot_ts, source)` |
 | Trades | `trade_id` |
 | Tickers | `(ticker, exchange_ts)` |

@@ -30,6 +30,69 @@ type RouterConfig struct {
 - Trade and ticker are global channels with lower volume
 - Buffers absorb temporary writer slowdowns
 
+### Peak Load Estimates
+
+| Data Type | Peak Rate | Buffer | Headroom |
+|-----------|-----------|--------|----------|
+| Orderbook deltas | ~1000/sec | 5000 | 5 seconds |
+| Trades | ~100/sec | 1000 | 10 seconds |
+| Tickers | ~100/sec | 1000 | 10 seconds |
+
+Buffers are sized to handle ~5-10 seconds of backpressure from slow Writers.
+
+---
+
+## Buffer Overflow Handling
+
+### Overflow Behavior
+
+When a buffer is full, the router uses **non-blocking sends**:
+
+```go
+select {
+case r.orderbookCh <- msg:
+    return true  // Sent successfully
+default:
+    r.logger.Warn("orderbook buffer full, dropping message", ...)
+    r.metrics.DroppedMessages.WithLabelValues("orderbook").Inc()
+    return false  // Dropped
+}
+```
+
+**Key behaviors:**
+1. **No blocking** - Router never waits; it immediately drops and continues
+2. **Logging** - Each drop is logged with message details (ticker, type, trade_id)
+3. **Metrics** - `router_messages_dropped_total` increments per drop
+4. **Silent data loss** - Dropped messages are NOT retried or queued
+
+### Data Recovery
+
+Dropped messages cause temporary data gaps. Recovery depends on data type:
+
+| Data Type | Recovery Mechanism | Resolution |
+|-----------|--------------------|------------|
+| **Orderbook deltas** | REST snapshot polling | 15-minute worst-case gap |
+| **Orderbook snapshots** | REST snapshot polling | Next poll cycle |
+| **Trades** | Other gatherers (deduplicator) | Immediate via redundancy |
+| **Tickers** | Next ticker message | Seconds (continuous updates) |
+
+### Why This Design?
+
+1. **Non-blocking is critical** - Blocking the router would cascade backpressure to WebSocket reads, causing socket buffer overflows and connection drops
+2. **Redundancy is sufficient** - 3 independent gatherers mean a drop on one is covered by others
+3. **Periodic polling fills gaps** - REST snapshot poller provides 15-minute resolution backup
+4. **Drops are rare** - Under normal load, buffers never fill; drops indicate system issues
+
+### Monitoring Drop Rates
+
+**Alert thresholds:**
+
+| Condition | Severity | Action |
+|-----------|----------|--------|
+| `dropped > 0` over 5 min | Warning | Investigate writer performance |
+| `dropped > 100` over 5 min | Critical | Check DB, increase buffer, scale writers |
+| Continuous drops | Critical | System cannot keep up; reduce subscription count |
+
 ---
 
 ## Error Handling
@@ -41,7 +104,7 @@ type RouterConfig struct {
 | Output buffer full | Log warning, increment metric, drop message |
 
 No retries. Dropped messages are acceptable because:
-- REST snapshot polling provides backup (1-minute resolution)
+- REST snapshot polling provides backup (15-minute resolution)
 - Deduplicator pulls from 3 independent gatherers
 - `ON CONFLICT DO NOTHING` handles any duplicates
 

@@ -102,18 +102,20 @@ Deduplication uses Kalshi's exchange-provided identifiers (not `received_at`):
 | Table | Primary Key | Source |
 |-------|-------------|--------|
 | `trades` | `trade_id` | Kalshi trade ID |
-| `orderbook_deltas` | `(ticker, exchange_ts, seq, price, side)` | Kalshi timestamp + sequence |
+| `orderbook_deltas` | `(ticker, exchange_ts, price, side)` | Kalshi timestamp + price level |
 | `orderbook_snapshots` | `(ticker, snapshot_ts, source)` | Snapshot timestamp + source |
 | `tickers` | `(ticker, exchange_ts)` | Kalshi timestamp |
+
+**Note:** `seq` is NOT part of the deduplication key because it is per-subscription (sid). Two gatherers receiving the same delta will have different seq values but identical (ticker, exchange_ts, price, side).
 
 ```sql
 INSERT INTO trades (trade_id, exchange_ts, received_at, ticker, price, size, taker_side)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (trade_id) DO NOTHING;
 
-INSERT INTO orderbook_deltas (ticker, exchange_ts, seq, price, side, size_delta, received_at)
+INSERT INTO orderbook_deltas (ticker, exchange_ts, price, side, size_delta, received_at, seq)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-ON CONFLICT (ticker, exchange_ts, seq, price, side) DO NOTHING;
+ON CONFLICT (ticker, exchange_ts, price, side) DO NOTHING;
 ```
 
 ### Relational Tables (Upsert)
@@ -124,7 +126,9 @@ Use `INSERT ... ON CONFLICT DO UPDATE`. Latest data wins.
 |-------|-------------|---------------|
 | `series` | `ticker` | All except PK |
 | `events` | `event_ticker` | All except PK |
-| `markets` | `ticker` | All except PK |
+| `markets` | `ticker` | All except PK (with status mapping) |
+
+**Status Mapping:** The deduplicator converts gatherer's 8-value `market_status` to production's 4-value status. See [Authoritative Mapping](data-model.md#2-production-status-4-values--authoritative-mapping).
 
 ```sql
 INSERT INTO markets (ticker, event_ticker, title, market_status, ...)

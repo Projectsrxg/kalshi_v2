@@ -122,8 +122,7 @@ flowchart TD
 migrations/
 ├── 001_create_trades.sql
 ├── 002_create_orderbook_deltas.sql
-├── 003_add_dollar_volume.sql
-└── 004_add_event_ticker_index.sql
+└── 003_add_dollar_volume.sql
 ```
 
 ### Migration Template

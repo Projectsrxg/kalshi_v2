@@ -165,6 +165,105 @@ func (r *Registry) reconcile(ctx context.Context) {
 
 ---
 
+## Synchronization
+
+The Market Registry uses a mutex (`r.state.mu`) to coordinate concurrent access from two sources:
+
+1. **WebSocket events** (`handleLifecycleEvent`) - real-time updates
+2. **REST reconciliation** (`reconcile`) - periodic full sync
+
+### Thread Safety Model
+
+```go
+type registryState struct {
+    mu            sync.RWMutex
+    markets       map[string]Market    // Protected by mu
+    activeSet     map[string]struct{}  // Protected by mu
+    exchangeActive bool
+    tradingActive  bool
+    lastSyncAt    time.Time
+}
+
+// Write operations acquire write lock
+func (r *Registry) upsertMarket(m Market) {
+    r.state.mu.Lock()
+    defer r.state.mu.Unlock()
+    r.state.markets[m.Ticker] = m
+    if m.MarketStatus == "active" {
+        r.state.activeSet[m.Ticker] = struct{}{}
+    }
+}
+
+// Read operations acquire read lock
+func (r *Registry) GetMarket(ticker string) (Market, bool) {
+    r.state.mu.RLock()
+    defer r.state.mu.RUnlock()
+    m, ok := r.state.markets[ticker]
+    return m, ok
+}
+```
+
+### Race Condition: WebSocket vs Reconciliation
+
+**Scenario:** A WebSocket `status_change` event arrives while reconciliation is in progress.
+
+```mermaid
+sequenceDiagram
+    participant WS as WebSocket Handler
+    participant R as Reconciliation
+    participant S as State (mutex)
+
+    Note over R: reconcile() starts
+    R->>S: mu.Lock()
+    activate S
+
+    Note over WS: status_change arrives
+    WS->>S: upsertMarket() wants mu.Lock()
+    Note over WS: Blocks waiting for lock
+
+    R->>S: Updates markets from REST
+    R->>S: mu.Unlock()
+    deactivate S
+
+    WS->>S: mu.Lock() acquired
+    activate S
+    WS->>S: Applies WebSocket update
+    WS->>S: mu.Unlock()
+    deactivate S
+```
+
+**Resolution:** The mutex serializes updates. WebSocket events that arrive during reconciliation wait for the lock and then apply their changes. Since WebSocket events contain the most recent state, the final result is correct even if the order is slightly delayed.
+
+### Duplicate Update Handling
+
+Both sources may report the same state change:
+
+| Source | Timing | Behavior |
+|--------|--------|----------|
+| WebSocket | Real-time | Updates state immediately |
+| Reconciliation | Every 5-10 min | Detects changes via status comparison |
+
+**Idempotency:** Updates are compared against current state. If a WebSocket event already applied a change, reconciliation sees `existing.MarketStatus == m.MarketStatus` and skips the update.
+
+```go
+// In reconcile():
+if existing.MarketStatus != m.MarketStatus {
+    // Only notify if status actually changed
+    r.notifyChangeLocked(...)
+}
+```
+
+### Notification Ordering
+
+The `notifyChange` and `notifyChangeLocked` functions ensure Connection Manager receives events in order:
+
+- `notifyChange` - acquires lock, then notifies
+- `notifyChangeLocked` - caller already holds lock (used in `reconcile`)
+
+This prevents Connection Manager from receiving out-of-order status transitions.
+
+---
+
 ## Error Handling
 
 | Error | Handling |

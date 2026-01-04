@@ -43,7 +43,6 @@ CREATE TABLE trades (
     exchange_ts     BIGINT NOT NULL,
     received_at     BIGINT NOT NULL,
     ticker          VARCHAR(128) NOT NULL,
-    event_ticker    VARCHAR(128),
     price           INTEGER NOT NULL,
     size            INTEGER NOT NULL,
     taker_side      BOOLEAN NOT NULL,
@@ -187,6 +186,20 @@ SELECT add_retention_policy('tickers', INTERVAL '30 days');
 | events | Forever | Forever | Snapshot only |
 | series | Forever | Forever | Snapshot only |
 
+### Tier Configuration Rationale
+
+Gatherer and production tiers have different configurations by design:
+
+| Setting | Gatherer | Production | Rationale |
+|---------|----------|------------|-----------|
+| Chunk interval | 1 hour | 1 day | Gatherer: smaller chunks for faster writes. Production: larger chunks for query efficiency |
+| Compression delay | 1 day | 7 days | Gatherer: aggressive to save disk. Production: delayed for query flexibility |
+| Retention | 7-30 days | 30-90+ days | Gatherer: buffer only. Production: queryable history |
+
+**Data Safety:** Production data with retention policies (orderbook_deltas: 90 days, tickers: 30 days) MUST be exported to S3 before expiration. If S3 export fails for extended periods, data loss occurs at retention boundary.
+
+**Alert:** `ExportLagWarning` fires when export lag > 2 hours. Critical action required if lag approaches retention period.
+
 ### Manual Retention
 
 ```sql
@@ -258,7 +271,6 @@ Each hypertable automatically gets an index on the time dimension.
 -- Trades: index on exchange_ts (automatic)
 -- Additional indexes:
 CREATE INDEX idx_trades_ticker_time ON trades(ticker, exchange_ts DESC);
-CREATE INDEX idx_trades_event_time ON trades(event_ticker, exchange_ts DESC);
 ```
 
 ### Index Strategy
@@ -266,7 +278,6 @@ CREATE INDEX idx_trades_event_time ON trades(event_ticker, exchange_ts DESC);
 | Query Pattern | Index |
 |---------------|-------|
 | Recent trades for market | `(ticker, exchange_ts DESC)` |
-| Recent trades for event | `(event_ticker, exchange_ts DESC)` |
 | Time range scan | `(exchange_ts)` (automatic) |
 
 ### Compressed Chunk Indexes

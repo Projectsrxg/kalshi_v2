@@ -1,0 +1,54 @@
+# Deduplicator Configuration Example
+# Copy to deduplicator.local.yaml and customize for local development
+
+# Instance identification
+instance:
+  id: deduplicator-1
+
+# Source gatherer databases (poll from all 3)
+sources:
+  - id: gatherer-1
+    host: gatherer-1.internal
+    port: 5432
+    name: kalshi_timeseries
+    user: ${GATHERER_1_USER}
+    password: ${GATHERER_1_PASSWORD}
+  - id: gatherer-2
+    host: gatherer-2.internal
+    port: 5432
+    name: kalshi_timeseries
+    user: ${GATHERER_2_USER}
+    password: ${GATHERER_2_PASSWORD}
+  - id: gatherer-3
+    host: gatherer-3.internal
+    port: 5432
+    name: kalshi_timeseries
+    user: ${GATHERER_3_USER}
+    password: ${GATHERER_3_PASSWORD}
+
+# Production RDS (write destination)
+production:
+  host: ${PROD_RDS_HOST}
+  port: 5432
+  name: kalshi_production
+  user: ${PROD_RDS_USER}
+  password: ${PROD_RDS_PASSWORD}
+  max_conns: 20
+
+# Sync settings
+sync:
+  poll_interval: 1s
+  batch_size: 5000
+  workers: 4
+
+# S3 export (optional)
+s3:
+  enabled: false
+  bucket: ${S3_BUCKET}
+  prefix: kalshi-data/
+  region: us-east-1
+
+# Metrics server
+metrics:
+  port: 9091
+  path: /metrics

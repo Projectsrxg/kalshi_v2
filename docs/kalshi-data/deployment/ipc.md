@@ -132,9 +132,50 @@ Example state:
 |-------------|------------|-------------|
 | gatherer-1 | trades | 1705312856123456 |
 | gatherer-1 | orderbook_deltas | 1705312856234567 |
-| gatherer-1 | tickers | 1705312856345678 |
-| gatherer-2 | trades | 1705312855987654 |
-| ... | ... | ... |
+
+### Cursor Atomicity
+
+**Critical:** Data insert and cursor update MUST be in the same database transaction:
+
+```go
+func (d *Deduplicator) syncBatch(ctx context.Context, table string, records []Record) error {
+    tx, err := d.production.BeginTx(ctx, nil)
+    if err != nil {
+        return err
+    }
+    defer tx.Rollback()
+
+    // Insert records
+    for _, r := range records {
+        if _, err := tx.ExecContext(ctx, insertSQL, r.Fields()...); err != nil {
+            return err  // Rollback on error
+        }
+    }
+
+    // Update cursor (same transaction)
+    maxTs := records[len(records)-1].ReceivedAt
+    if _, err := tx.ExecContext(ctx,
+        `UPDATE sync_cursors SET last_synced = $1, updated_at = NOW()
+         WHERE gatherer_id = $2 AND table_name = $3`,
+        maxTs, d.gathererID, table,
+    ); err != nil {
+        return err  // Rollback on error
+    }
+
+    return tx.Commit()  // Atomic: both succeed or both fail
+}
+```
+
+**Failure scenarios:**
+
+| Scenario | Insert | Cursor Update | Result |
+|----------|--------|---------------|--------|
+| Success | Committed | Committed | Normal |
+| Crash before commit | Rolled back | Rolled back | Re-sync same batch |
+| Insert fails | Rolled back | Not attempted | Re-sync same batch |
+| Cursor update fails | Rolled back | Rolled back | Re-sync same batch |
+
+**Guarantee:** No data loss, no cursor advancement without data. Duplicates handled by `ON CONFLICT DO NOTHING`.
 
 ---
 

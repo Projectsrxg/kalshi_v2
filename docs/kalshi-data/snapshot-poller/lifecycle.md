@@ -19,7 +19,7 @@ sequenceDiagram
     Main->>SP: Start(ctx)
     SP->>SP: Store context
     SP->>SP: Start polling goroutine
-    SP->>SP: Create ticker (1 minute)
+    SP->>SP: Create ticker (15 minutes)
     Note over SP: Polling loop begins
 ```
 
@@ -152,4 +152,4 @@ Snapshot Poller does **not** own its dependencies:
 | HTTP client timeout | Network issues | Request fails, logged, next cycle retries |
 | Context cancelled | Shutdown requested | Goroutine exits cleanly |
 
-**Design:** No retry logic within a poll cycle. Failed requests simply wait for the next 1-minute cycle. Combined with 3-gatherer redundancy, this provides sufficient coverage.
+**Design:** No retry logic within a poll cycle. Failed requests simply wait for the next 15-minute cycle. Combined with 3-gatherer redundancy, this provides sufficient coverage.

@@ -243,7 +243,7 @@ func (w *SnapshotWriter) transform(snap RESTOrderbookSnapshot) orderbookSnapshot
 **Lifecycle:**
 1. Main creates Snapshot Writer with DB pool
 2. Snapshot Poller receives Snapshot Writer reference
-3. Every 1 minute, Snapshot Poller:
+3. Every 15 minutes, Snapshot Poller:
    - Fetches orderbook via REST API for each market
    - Calls `Write()` synchronously (blocks until insert completes)
 4. On shutdown, Snapshot Poller stops polling, Snapshot Writer connection pool is closed

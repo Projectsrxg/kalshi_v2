@@ -505,9 +505,11 @@ resource "aws_instance" "gatherer" {
     throughput  = 125
   }
 
+  # SECURITY: Passwords fetched from Secrets Manager at runtime, not in user_data
   user_data = base64encode(templatefile("${path.module}/scripts/gatherer-init.sh", {
-    gatherer_id = count.index + 1
-    db_password = var.db_password
+    gatherer_id     = count.index + 1
+    secrets_prefix  = "${var.project}/prod"
+    aws_region      = var.aws_region
   }))
 
   tags = {
@@ -531,10 +533,12 @@ resource "aws_instance" "deduplicator" {
     throughput  = 125
   }
 
+  # SECURITY: Passwords fetched from Secrets Manager at runtime, not in user_data
   user_data = base64encode(templatefile("${path.module}/scripts/deduplicator-init.sh", {
-    gatherer_ips = [for i in aws_instance.gatherer : i.private_ip]
-    rds_endpoint = aws_db_instance.production.endpoint
-    db_password  = var.db_password
+    gatherer_ips   = [for i in aws_instance.gatherer : i.private_ip]
+    rds_endpoint   = aws_db_instance.production.endpoint
+    secrets_prefix = "${var.project}/prod"
+    aws_region     = var.aws_region
   }))
 
   tags = {
@@ -704,6 +708,304 @@ output "s3_bucket" {
 
 ---
 
+## secrets.tf
+
+```hcl
+# Secrets Manager for database credentials
+# IMPORTANT: Create these secrets BEFORE running terraform apply
+
+resource "aws_secretsmanager_secret" "api_key" {
+  name        = "${var.project}/prod/api-key"
+  description = "Kalshi API key"
+}
+
+resource "aws_secretsmanager_secret" "timescaledb_password" {
+  name        = "${var.project}/prod/timescaledb-password"
+  description = "TimescaleDB password for gatherer"
+}
+
+resource "aws_secretsmanager_secret" "postgresql_password" {
+  name        = "${var.project}/prod/postgresql-password"
+  description = "PostgreSQL password for gatherer"
+}
+
+resource "aws_secretsmanager_secret" "rds_password" {
+  name        = "${var.project}/prod/rds-password"
+  description = "Production RDS password"
+}
+
+resource "aws_secretsmanager_secret" "gatherer_reader_password" {
+  name        = "${var.project}/prod/gatherer-reader-password"
+  description = "Password for deduplicator to read from gatherers"
+}
+
+# IAM policy to read secrets
+resource "aws_iam_policy" "secrets_read" {
+  name        = "${var.project}-secrets-read"
+  description = "Allow reading secrets from Secrets Manager"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret"
+        ]
+        Resource = [
+          "arn:aws:secretsmanager:${var.aws_region}:*:secret:${var.project}/prod/*"
+        ]
+      }
+    ]
+  })
+}
+
+# Attach to gatherer role
+resource "aws_iam_role_policy_attachment" "gatherer_secrets" {
+  role       = aws_iam_role.gatherer.name
+  policy_arn = aws_iam_policy.secrets_read.arn
+}
+
+# Attach to deduplicator role
+resource "aws_iam_role_policy_attachment" "deduplicator_secrets" {
+  role       = aws_iam_role.deduplicator.name
+  policy_arn = aws_iam_policy.secrets_read.arn
+}
+```
+
+---
+
+## scripts/gatherer-init.sh
+
+```bash
+#!/bin/bash
+# Gatherer initialization script
+# Variables injected by Terraform: gatherer_id, secrets_prefix, aws_region
+
+set -e
+
+GATHERER_ID="${gatherer_id}"
+SECRETS_PREFIX="${secrets_prefix}"
+AWS_REGION="${aws_region}"
+
+echo "Initializing gatherer-$GATHERER_ID..."
+
+# Install dependencies
+dnf install -y postgresql16-server timescaledb jq
+
+# Fetch secrets from Secrets Manager
+get_secret() {
+    aws secretsmanager get-secret-value \
+        --region "$AWS_REGION" \
+        --secret-id "$SECRETS_PREFIX/$1" \
+        --query 'SecretString' \
+        --output text
+}
+
+export KALSHI_API_KEY=$(get_secret "api-key")
+export TIMESCALEDB_PASSWORD=$(get_secret "timescaledb-password")
+export POSTGRESQL_PASSWORD=$(get_secret "postgresql-password")
+
+# Initialize PostgreSQL
+postgresql-setup --initdb
+systemctl start postgresql
+
+# Create databases
+sudo -u postgres psql -c "CREATE DATABASE kalshi_ts;"
+sudo -u postgres psql -c "CREATE DATABASE kalshi_meta;"
+sudo -u postgres psql -d kalshi_ts -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
+
+# Create users with passwords from Secrets Manager
+sudo -u postgres psql -c "CREATE USER gatherer WITH PASSWORD '$TIMESCALEDB_PASSWORD';"
+sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE kalshi_ts TO gatherer;"
+sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE kalshi_meta TO gatherer;"
+
+# Create dedup_reader for deduplicator access
+READER_PASSWORD=$(get_secret "gatherer-reader-password")
+sudo -u postgres psql -c "CREATE USER dedup_reader WITH PASSWORD '$READER_PASSWORD';"
+sudo -u postgres psql -c "GRANT CONNECT ON DATABASE kalshi_ts TO dedup_reader;"
+sudo -u postgres psql -c "GRANT CONNECT ON DATABASE kalshi_meta TO dedup_reader;"
+
+# Configure pg_hba.conf for remote deduplicator access
+cat >> /var/lib/pgsql/data/pg_hba.conf <<EOF
+hostssl kalshi_ts       dedup_reader    10.0.0.0/8    scram-sha-256
+hostssl kalshi_meta     dedup_reader    10.0.0.0/8    scram-sha-256
+EOF
+
+# Configure PostgreSQL to listen on all interfaces
+echo "listen_addresses = '*'" >> /var/lib/pgsql/data/postgresql.conf
+
+systemctl restart postgresql
+
+# Write gatherer config (passwords come from environment)
+cat > /etc/kalshi/gatherer.yaml <<EOF
+gatherer_id: "gatherer-$GATHERER_ID"
+
+api:
+  base_url: "https://api.elections.kalshi.com/trade-api/v2"
+  ws_url: "wss://api.elections.kalshi.com"
+  api_key: "\${KALSHI_API_KEY}"
+
+timescaledb:
+  host: "localhost"
+  port: 5432
+  database: "kalshi_ts"
+  user: "gatherer"
+  password: "\${TIMESCALEDB_PASSWORD}"
+  ssl_mode: "prefer"
+
+postgresql:
+  host: "localhost"
+  port: 5432
+  database: "kalshi_meta"
+  user: "gatherer"
+  password: "\${POSTGRESQL_PASSWORD}"
+  ssl_mode: "prefer"
+
+logging:
+  level: "info"
+  format: "json"
+EOF
+
+# Run migrations
+/opt/kalshi/gatherer migrate --config /etc/kalshi/gatherer.yaml
+
+# Create systemd environment file for secrets
+cat > /etc/kalshi/gatherer.env <<EOF
+KALSHI_API_KEY=$KALSHI_API_KEY
+TIMESCALEDB_PASSWORD=$TIMESCALEDB_PASSWORD
+POSTGRESQL_PASSWORD=$POSTGRESQL_PASSWORD
+EOF
+chmod 600 /etc/kalshi/gatherer.env
+
+# Start gatherer service
+systemctl enable gatherer
+systemctl start gatherer
+
+echo "Gatherer-$GATHERER_ID initialization complete"
+```
+
+---
+
+## scripts/deduplicator-init.sh
+
+```bash
+#!/bin/bash
+# Deduplicator initialization script
+# Variables injected by Terraform: gatherer_ips, rds_endpoint, secrets_prefix, aws_region
+
+set -e
+
+GATHERER_IPS="${gatherer_ips}"
+RDS_ENDPOINT="${rds_endpoint}"
+SECRETS_PREFIX="${secrets_prefix}"
+AWS_REGION="${aws_region}"
+
+echo "Initializing deduplicator..."
+
+# Install dependencies
+dnf install -y jq postgresql16
+
+# Fetch secrets from Secrets Manager
+get_secret() {
+    aws secretsmanager get-secret-value \
+        --region "$AWS_REGION" \
+        --secret-id "$SECRETS_PREFIX/$1" \
+        --query 'SecretString' \
+        --output text
+}
+
+export RDS_PASSWORD=$(get_secret "rds-password")
+export GATHERER_READER_PASSWORD=$(get_secret "gatherer-reader-password")
+
+# Download RDS CA certificate
+wget https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
+    -O /etc/kalshi/rds-ca-bundle.pem
+
+# Wait for RDS to be available
+until pg_isready -h "$RDS_ENDPOINT" -p 5432; do
+    echo "Waiting for RDS..."
+    sleep 5
+done
+
+# Wait for at least one gatherer to be healthy
+GATHERER_READY=false
+for i in {1..60}; do
+    for g in $GATHERER_IPS; do
+        if curl -s "http://$g:8080/health" | grep -q '"status":"healthy"'; then
+            GATHERER_READY=true
+            break 2
+        fi
+    done
+    echo "Waiting for gatherers... ($i/60)"
+    sleep 5
+done
+
+if [ "$GATHERER_READY" = false ]; then
+    echo "ERROR: No gatherers available after 5 minutes"
+    exit 1
+fi
+
+# Write deduplicator config
+cat > /etc/kalshi/deduplicator.yaml <<EOF
+deduplicator_id: "deduplicator-1"
+
+gatherers:
+$(for ip in $GATHERER_IPS; do
+cat <<GATHERER
+  - id: "gatherer-$(echo $ip | cut -d. -f4)"
+    host: "$ip"
+    timescaledb:
+      port: 5432
+      database: "kalshi_ts"
+      user: "dedup_reader"
+      password: "\${GATHERER_READER_PASSWORD}"
+      ssl_mode: "require"
+    postgresql:
+      port: 5432
+      database: "kalshi_meta"
+      user: "dedup_reader"
+      password: "\${GATHERER_READER_PASSWORD}"
+      ssl_mode: "require"
+GATHERER
+done)
+
+production:
+  host: "$RDS_ENDPOINT"
+  port: 5432
+  database: "kalshi_prod"
+  user: "deduplicator"
+  password: "\${RDS_PASSWORD}"
+  ssl_mode: "verify-full"
+  ssl_root_cert: "/etc/kalshi/rds-ca-bundle.pem"
+
+s3:
+  enabled: true
+  bucket: "kalshi-data-archive"
+  region: "$AWS_REGION"
+
+logging:
+  level: "info"
+  format: "json"
+EOF
+
+# Create systemd environment file for secrets
+cat > /etc/kalshi/deduplicator.env <<EOF
+RDS_PASSWORD=$RDS_PASSWORD
+GATHERER_READER_PASSWORD=$GATHERER_READER_PASSWORD
+EOF
+chmod 600 /etc/kalshi/deduplicator.env
+
+# Start deduplicator service
+systemctl enable deduplicator
+systemctl start deduplicator
+
+echo "Deduplicator initialization complete"
+```
+
+---
+
 ## Usage
 
 ```bash
@@ -726,7 +1028,37 @@ terraform destroy -var-file="prod.tfvars"
 ```hcl
 project     = "kalshi-data"
 environment = "prod"
-region      = "us-east-1"
-admin_ip    = "1.2.3.4"  # Your IP
-db_password = "..."      # Use secrets manager in production
+aws_region  = "us-east-1"
+admin_ip    = "1.2.3.4"  # Your IP for SSH access
+
+# NOTE: Database passwords are NOT in tfvars
+# They are stored in AWS Secrets Manager and fetched at runtime
+# See secrets.tf for secret definitions
+```
+
+### Pre-Deployment: Create Secrets
+
+Before running `terraform apply`, create the required secrets:
+
+```bash
+# Create secrets with initial values
+aws secretsmanager create-secret \
+  --name "kalshi-data/prod/api-key" \
+  --secret-string "your-kalshi-api-key"
+
+aws secretsmanager create-secret \
+  --name "kalshi-data/prod/timescaledb-password" \
+  --secret-string "$(openssl rand -base64 32)"
+
+aws secretsmanager create-secret \
+  --name "kalshi-data/prod/postgresql-password" \
+  --secret-string "$(openssl rand -base64 32)"
+
+aws secretsmanager create-secret \
+  --name "kalshi-data/prod/rds-password" \
+  --secret-string "$(openssl rand -base64 32)"
+
+aws secretsmanager create-secret \
+  --name "kalshi-data/prod/gatherer-reader-password" \
+  --secret-string "$(openssl rand -base64 32)"
 ```

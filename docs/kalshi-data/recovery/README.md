@@ -84,7 +84,7 @@ See [WebSocket Recovery](./websocket-recovery.md) for details.
 
 ### Layer 2: REST Snapshot Backup
 
-Snapshot Poller provides 1-minute resolution orderbook snapshots.
+Snapshot Poller provides 15-minute resolution orderbook snapshots.
 
 ```mermaid
 flowchart LR
@@ -93,7 +93,7 @@ flowchart LR
     end
 
     subgraph "Backup Path"
-        REST[REST Snapshots<br/>1-min interval]
+        REST[REST Snapshots<br/>15-min interval]
     end
 
     WS -->|Gap| MISSING[Missing Data]
@@ -102,7 +102,7 @@ flowchart LR
 ```
 
 **Characteristics:**
-- Polls all active markets every 1 minute
+- Polls all active markets every 15 minutes
 - Independent of WebSocket state
 - Stored with `source='rest'` for differentiation
 

@@ -29,7 +29,7 @@ flowchart TD
 | **Connection Manager** | Maintains 150 WebSocket connections per gatherer |
 | **Message Router** | Routes messages to appropriate writers with fan-out |
 | **Writers** | Batch writers for orderbook deltas, trades, tickers, snapshots |
-| **Snapshot Poller** | Polls REST API every 1 minute as backup |
+| **Snapshot Poller** | Polls REST API every 15 minutes as backup |
 | **Deduplicator** | Merges data from all gatherers, writes to production |
 
 ### Data Flow
@@ -45,7 +45,7 @@ flowchart TD
 
 - **Triple redundancy**: 3 gatherers independently collect all data
 - **No data loss**: Cross-gatherer deduplication fills gaps
-- **REST backup**: 1-minute snapshot polling as fallback
+- **REST backup**: 15-minute snapshot polling as fallback
 - **Automatic recovery**: WebSocket reconnection with exponential backoff
 - **Time-series optimized**: TimescaleDB with compression and retention policies
 - **Long-term storage**: Parquet export to S3 with lifecycle policies
@@ -81,6 +81,48 @@ flowchart TD
 - **Object Storage**: Amazon S3
 - **Monitoring**: Prometheus + Grafana
 - **Infrastructure**: AWS (EC2, RDS, S3)
+
+## Repository Structure
+
+```
+kalshi-data/
+├── cmd/
+│   ├── gatherer/               # Gatherer binary entrypoint
+│   └── deduplicator/           # Deduplicator binary entrypoint
+├── internal/
+│   ├── api/                    # Kalshi API client (REST + WebSocket)
+│   ├── config/                 # Configuration loading
+│   ├── database/               # Database connection pools
+│   ├── market/                 # Market Registry
+│   ├── connection/             # Connection Manager
+│   ├── router/                 # Message Router
+│   ├── writer/                 # Batch writers
+│   ├── poller/                 # Snapshot Poller
+│   ├── dedup/                  # Deduplication logic
+│   └── metrics/                # Prometheus metrics
+├── configs/                    # Configuration files
+├── deploy/terraform/           # Infrastructure-as-Code
+├── docs/                       # Documentation
+├── go.mod
+└── Makefile
+```
+
+## Development
+
+```bash
+# Build both binaries
+make build
+
+# Run tests
+make test
+
+# Build for production (Linux ARM64)
+make build-linux-arm64
+
+# Run locally
+./bin/gatherer --config configs/gatherer.local.yaml
+./bin/deduplicator --config configs/deduplicator.local.yaml
+```
 
 ## Kalshi API
 

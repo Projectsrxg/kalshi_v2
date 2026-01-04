@@ -227,7 +227,6 @@ type tradeRow struct {
     Size       int
     TakerSide  bool    // TRUE = yes, FALSE = no
     SID        int64   // Subscription ID
-    // Note: event_ticker exists in schema but not populated by gatherer
 }
 ```
 

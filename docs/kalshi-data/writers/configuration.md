@@ -107,7 +107,7 @@ type OrderbookWriterConfig struct {
 
 **Recovery strategy:** Rely on redundancy:
 - 3 independent gatherers capture same data
-- REST snapshot polling provides 1-minute backup
+- REST snapshot polling provides 15-minute backup
 - Deduplicator merges all sources
 
 ---
