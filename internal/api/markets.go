@@ -6,7 +6,11 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// DefaultPaginationTimeout is the default timeout for paginated requests like GetAllMarkets.
+const DefaultPaginationTimeout = 10 * time.Minute
 
 // GetMarkets fetches a page of markets.
 func (c *Client) GetMarkets(ctx context.Context, opts GetMarketsOptions) (*MarketsResponse, error) {
@@ -40,12 +44,21 @@ func (c *Client) GetMarkets(ctx context.Context, opts GetMarketsOptions) (*Marke
 }
 
 // GetAllMarkets fetches all markets by paginating through results.
+// Uses DefaultPaginationTimeout (10m) if the context has no deadline.
 func (c *Client) GetAllMarkets(ctx context.Context) ([]APIMarket, error) {
 	return c.GetAllMarketsWithOptions(ctx, GetMarketsOptions{})
 }
 
 // GetAllMarketsWithOptions fetches all markets matching the given options.
+// Uses DefaultPaginationTimeout (10m) if the context has no deadline.
 func (c *Client) GetAllMarketsWithOptions(ctx context.Context, opts GetMarketsOptions) ([]APIMarket, error) {
+	// Apply default timeout if context has no deadline.
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, DefaultPaginationTimeout)
+		defer cancel()
+	}
+
 	var allMarkets []APIMarket
 	opts.Limit = 1000 // Max page size
 
