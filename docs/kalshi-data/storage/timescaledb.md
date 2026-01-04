@@ -307,9 +307,10 @@ SET parallel_tuple_cost = 0.001;
 SET parallel_setup_cost = 0.001;
 
 -- Example parallel aggregation
+-- Pass cutoff_ts from Go: time.Now().Add(-1*time.Hour).UnixMicro()
 SELECT ticker, COUNT(*), AVG(price)
 FROM trades
-WHERE exchange_ts > timestamp_to_us(NOW() - INTERVAL '1 hour')
+WHERE exchange_ts > $1  -- cutoff_ts parameter (µs)
 GROUP BY ticker;
 ```
 
@@ -323,10 +324,11 @@ Pre-computed rollups for analytics queries.
 
 ```sql
 -- Hourly trade summary
+-- Uses time_bucket on BIGINT (µs) with interval in µs: 1 hour = 3600000000 µs
 CREATE MATERIALIZED VIEW trades_hourly
 WITH (timescaledb.continuous) AS
 SELECT
-    time_bucket('1 hour', us_to_timestamp(exchange_ts)) AS bucket,
+    time_bucket(3600000000::BIGINT, exchange_ts) AS bucket_ts,  -- 1 hour in µs
     ticker,
     COUNT(*) as trade_count,
     SUM(size) as total_volume,
@@ -334,13 +336,13 @@ SELECT
     MIN(price) as min_price,
     MAX(price) as max_price
 FROM trades
-GROUP BY bucket, ticker
+GROUP BY bucket_ts, ticker
 WITH NO DATA;
 
--- Refresh policy
+-- Refresh policy (offsets in µs)
 SELECT add_continuous_aggregate_policy('trades_hourly',
-    start_offset => INTERVAL '2 hours',
-    end_offset => INTERVAL '1 hour',
+    start_offset => 7200000000::BIGINT,   -- 2 hours in µs
+    end_offset => 3600000000::BIGINT,     -- 1 hour in µs
     schedule_interval => INTERVAL '1 hour');
 ```
 
@@ -348,9 +350,10 @@ SELECT add_continuous_aggregate_policy('trades_hourly',
 
 ```sql
 -- Fast query against pre-computed data
+-- Pass cutoff_ts from Go: time.Now().Add(-24*time.Hour).UnixMicro()
 SELECT ticker, SUM(trade_count), SUM(total_volume)
 FROM trades_hourly
-WHERE bucket >= NOW() - INTERVAL '24 hours'
+WHERE bucket_ts >= $1  -- cutoff_ts parameter (µs)
 GROUP BY ticker
 ORDER BY SUM(total_volume) DESC
 LIMIT 10;

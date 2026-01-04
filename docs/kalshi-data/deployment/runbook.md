@@ -370,9 +370,8 @@ SELECT 'markets', COUNT(*) FROM markets;
 -- Check sync cursors
 SELECT * FROM sync_cursors;
 
--- Check latest data timestamps
-SELECT 'trades' as table_name,
-       to_timestamp(MAX(exchange_ts)/1000000.0) as latest
+-- Check latest data timestamps (exchange_ts in µs)
+SELECT 'trades' as table_name, MAX(exchange_ts) as latest_ts_us
 FROM trades;
 EOF
 ```
