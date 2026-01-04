@@ -269,9 +269,9 @@ curl http://deduplicator:8080/health | jq '.gatherers'
 
 1. **Identify the gap**
    ```sql
-   -- Find gaps in trades
+   -- Find gaps in trades (bucket by minute = 60000000 µs)
    SELECT
-       date_trunc('minute', to_timestamp(exchange_ts/1000000)) as minute,
+       (exchange_ts / 60000000) * 60000000 as minute_bucket_ts,
        COUNT(*) as trades
    FROM trades
    WHERE ticker = 'EXAMPLE-TICKER'

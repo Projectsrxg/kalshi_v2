@@ -135,9 +135,9 @@ Excluding `sid` saves ~8 bytes per row:
 
 ---
 
-## Utility Functions
+## Data Formats
 
-### Price Conversion
+### Price Format
 
 Internal format: integer hundred-thousandths (0-100,000 = $0.00000-$1.00000)
 
@@ -148,29 +148,26 @@ Internal format: integer hundred-thousandths (0-100,000 = $0.00000-$1.00000)
 | 52550 | $0.5255 | Subpenny (0.01 cent) |
 | 99990 | $0.9999 | Tail pricing |
 
-```sql
--- Display helper: internal to dollars
-CREATE FUNCTION internal_to_dollars(internal INTEGER)
-RETURNS NUMERIC(10,5) AS $$
-    SELECT internal::NUMERIC / 100000;
-$$ LANGUAGE SQL IMMUTABLE;
-```
+### Timestamp Format
 
-### Timestamp Conversion
+All timestamps stored as `BIGINT` in microseconds (µs since Unix epoch).
 
-```sql
--- Microseconds to timestamp
-CREATE FUNCTION us_to_timestamp(us BIGINT)
-RETURNS TIMESTAMPTZ AS $$
-    SELECT to_timestamp(us / 1000000.0) AT TIME ZONE 'UTC';
-$$ LANGUAGE SQL IMMUTABLE;
+### All Conversions in Application Layer
 
--- Timestamp to microseconds
-CREATE FUNCTION timestamp_to_us(ts TIMESTAMPTZ)
-RETURNS BIGINT AS $$
-    SELECT (EXTRACT(EPOCH FROM ts) * 1000000)::BIGINT;
-$$ LANGUAGE SQL IMMUTABLE;
-```
+**Design principle:** The database stores raw values only. All conversions happen in Go code:
+
+| Conversion | Go Implementation |
+|------------|-------------------|
+| Internal → dollars | `float64(price) / 100000.0` |
+| Dollars → internal | `int(dollars * 100000)` |
+| µs → `time.Time` | `time.UnixMicro(ts)` |
+| `time.Time` → µs | `t.UnixMicro()` |
+
+**Why no database functions:**
+- Simpler schema with no custom functions
+- All logic in one place (Go binary)
+- Easier testing and debugging
+- Portable across database instances
 
 ---
 

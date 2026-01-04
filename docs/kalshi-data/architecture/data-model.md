@@ -100,13 +100,13 @@ erDiagram
 
 ---
 
-## Utility Functions
+## Data Formats
 
-### Price Conversion
+### Price Format
 
 Kalshi API returns prices in both cent and dollar formats. Use `*_dollars` fields for subpenny precision.
 
-Our internal format: integer hundred-thousandths (0-100,000 = $0.00000-$1.00000)
+Internal format: integer hundred-thousandths (0-100,000 = $0.00000-$1.00000)
 
 **Conversion (done by gatherer before storage):**
 
@@ -118,16 +118,7 @@ Our internal format: integer hundred-thousandths (0-100,000 = $0.00000-$1.00000)
 | `"0.99"` | 99000 | Near 100% |
 | `"0.9999"` | 99990 | Tail pricing |
 
-```sql
--- Display helper: internal to dollars
--- 52500 -> 0.52500
-CREATE FUNCTION internal_to_dollars(internal INTEGER)
-RETURNS NUMERIC(10,5) AS $$
-    SELECT internal::NUMERIC / 100000;
-$$ LANGUAGE SQL IMMUTABLE;
-```
-
-### Timestamp Conversion
+### Timestamp Format
 
 **Two timestamp fields in time-series tables:**
 
@@ -136,25 +127,29 @@ $$ LANGUAGE SQL IMMUTABLE;
 | `exchange_ts` | Kalshi API `ts` field | When Kalshi processed the event (server-side) |
 | `received_at` | Gatherer `time.Now()` | When gatherer received the message (client-side) |
 
-Both stored in microseconds (µs since Unix epoch).
+Both stored as `BIGINT` in microseconds (µs since Unix epoch).
 
 **Use cases:**
 - `exchange_ts`: Ordering events, deduplication, analytics
 - `received_at`: Debugging latency, identifying gatherer delays
 
-```sql
--- Microseconds to timestamp
-CREATE FUNCTION us_to_timestamp(us BIGINT)
-RETURNS TIMESTAMPTZ AS $$
-    SELECT to_timestamp(us / 1000000.0) AT TIME ZONE 'UTC';
-$$ LANGUAGE SQL IMMUTABLE;
+### All Conversions in Application Layer
 
--- Timestamp to microseconds
-CREATE FUNCTION timestamp_to_us(ts TIMESTAMPTZ)
-RETURNS BIGINT AS $$
-    SELECT (EXTRACT(EPOCH FROM ts) * 1000000)::BIGINT;
-$$ LANGUAGE SQL IMMUTABLE;
-```
+**Design principle:** The database stores raw values only. All conversions happen in Go code:
+
+| Conversion | Location | Implementation |
+|------------|----------|----------------|
+| `"0.52"` → `52000` | `internal/api/convert.go` | `DollarsToCents()` |
+| ISO 8601 → µs | `internal/api/convert.go` | `ParseTimestamp()` |
+| `time.Time` → µs | Go code | `time.UnixMicro()` |
+| µs → `time.Time` | Go code | `time.UnixMicro(ts)` |
+| Internal → dollars | Go code | `float64(price) / 100000.0` |
+
+**Why no database functions:**
+- Simpler schema with no custom functions to maintain
+- All logic in one place (Go binary)
+- Easier testing and debugging
+- Portable across database instances
 
 ---
 
@@ -492,17 +487,31 @@ ORDER BY price DESC;
 ### Recent trades
 
 ```sql
-SELECT trade_id, us_to_timestamp(exchange_ts) as ts, size,
-       internal_to_dollars(price) as price, taker_side
+-- Returns raw values; convert in application layer
+SELECT trade_id, exchange_ts, size, price, taker_side
 FROM trades
 WHERE ticker = $1
 ORDER BY exchange_ts DESC
 LIMIT 100;
 ```
 
+**Go code to display results:**
+```go
+for rows.Next() {
+    var t Trade
+    rows.Scan(&t.TradeID, &t.ExchangeTs, &t.Size, &t.Price, &t.TakerSide)
+
+    // Convert in Go
+    ts := time.UnixMicro(t.ExchangeTs)
+    dollars := float64(t.Price) / 100000.0
+    fmt.Printf("%s: $%.5f x %d @ %s\n", t.TradeID, dollars, t.Size, ts.Format(time.RFC3339))
+}
+```
+
 ### Market activity (last 24h)
 
 ```sql
+-- Pass cutoff timestamp from Go: time.Now().Add(-24*time.Hour).UnixMicro()
 SELECT
     m.ticker,
     m.title,
@@ -510,9 +519,15 @@ SELECT
     SUM(t.size) as total_volume
 FROM markets m
 LEFT JOIN trades t ON t.ticker = m.ticker
-    AND t.exchange_ts > (timestamp_to_us(NOW()) - 86400000000)
+    AND t.exchange_ts > $2  -- cutoff_ts parameter
 WHERE m.market_status = 'open'
 GROUP BY m.ticker, m.title
 ORDER BY total_volume DESC
 LIMIT 100;
+```
+
+**Go code:**
+```go
+cutoffTs := time.Now().Add(-24 * time.Hour).UnixMicro()
+rows, err := db.Query(query, ticker, cutoffTs)
 ```

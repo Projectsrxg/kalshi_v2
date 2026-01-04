@@ -139,9 +139,9 @@ curl localhost:8080/health | jq
 # Check data is flowing (after a minute)
 psql $TIMESCALEDB_URL -c "SELECT COUNT(*) FROM trades;"
 
-# Watch trades in real-time
+# Watch trades in real-time (exchange_ts is in µs)
 psql $TIMESCALEDB_URL -c "
-  SELECT ticker, price, size, to_timestamp(exchange_ts/1000000.0)
+  SELECT ticker, price, size, exchange_ts
   FROM trades ORDER BY exchange_ts DESC LIMIT 10;
 "
 ```
@@ -486,27 +486,32 @@ tail -f gatherer.log | grep -E "(trade|orderbook|error)"
 # Connect to TimescaleDB
 psql postgres://postgres:postgres@localhost:5432/kalshi_ts
 
-# Useful queries:
-# Recent trades
-SELECT ticker, price, size, to_timestamp(exchange_ts/1000000.0) as ts
+# Useful queries (all timestamps in µs, prices in hundred-thousandths):
+
+# Recent trades (raw values - convert in application)
+SELECT ticker, price, size, exchange_ts
 FROM trades ORDER BY exchange_ts DESC LIMIT 20;
 
-# Trade volume by market
+# Trade volume by market (last hour)
+# Calculate cutoff in Go: time.Now().Add(-1*time.Hour).UnixMicro()
+# For ad-hoc queries: SELECT extract(epoch from now()) * 1000000;
 SELECT ticker, COUNT(*), SUM(size) as volume
 FROM trades
-WHERE exchange_ts > extract(epoch from now() - interval '1 hour') * 1000000
+WHERE exchange_ts > (SELECT extract(epoch from now()) * 1000000 - 3600000000)
 GROUP BY ticker ORDER BY volume DESC;
 
-# Orderbook depth
+# Orderbook depth (last 5 minutes = 300000000 µs)
 SELECT ticker, side, COUNT(*) as levels
 FROM orderbook_deltas
-WHERE exchange_ts > extract(epoch from now() - interval '5 minutes') * 1000000
+WHERE exchange_ts > (SELECT extract(epoch from now()) * 1000000 - 300000000)
 GROUP BY ticker, side;
 
 # Active markets
 \c kalshi_meta
 SELECT ticker, title, status FROM markets WHERE status = 'open' LIMIT 20;
 ```
+
+**Note:** For ad-hoc queries, you can calculate timestamps inline. Production code should always compute timestamps in Go and pass as parameters.
 
 ### MinIO (Local S3)
 
