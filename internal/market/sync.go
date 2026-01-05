@@ -2,6 +2,7 @@ package market
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/rickgao/kalshi-data/internal/api"
@@ -203,12 +204,163 @@ func (r *registryImpl) lifecycleLoop(ctx context.Context) {
 	}
 }
 
-// handleLifecycleMessage processes a single lifecycle message.
-// For now, this is a placeholder - WebSocket parsing will be added later.
+// lifecycleMessage is the WebSocket message for market_lifecycle channel.
+type lifecycleMessage struct {
+	Type string `json:"type"`
+	SID  int64  `json:"sid"`
+	Msg  struct {
+		MarketTicker string `json:"market_ticker"`
+		EventType    string `json:"event_type"` // "created", "status_change", "settled"
+		OldStatus    string `json:"old_status"`
+		NewStatus    string `json:"new_status"`
+		Result       string `json:"result"` // "yes", "no", or ""
+		Timestamp    int64  `json:"ts"`     // Unix timestamp (seconds)
+	} `json:"msg"`
+}
+
+// handleLifecycleMessage processes a single lifecycle message from WebSocket.
 func (r *registryImpl) handleLifecycleMessage(ctx context.Context, msg []byte) {
-	// TODO: Parse WebSocket message and handle lifecycle events.
-	// For now, we rely on reconciliation to catch changes.
-	r.logger.Debug("received lifecycle message", "len", len(msg))
+	var lm lifecycleMessage
+	if err := json.Unmarshal(msg, &lm); err != nil {
+		r.logger.Warn("failed to parse lifecycle message", "error", err)
+		return
+	}
+
+	// Only process market_lifecycle messages
+	if lm.Type != "market_lifecycle" {
+		return
+	}
+
+	ticker := lm.Msg.MarketTicker
+	eventType := lm.Msg.EventType
+
+	r.logger.Debug("processing lifecycle event",
+		"ticker", ticker,
+		"event", eventType,
+		"old_status", lm.Msg.OldStatus,
+		"new_status", lm.Msg.NewStatus,
+	)
+
+	switch eventType {
+	case "created":
+		// New market created - fetch full details from REST API
+		r.handleMarketCreated(ctx, ticker, lm.Msg.NewStatus)
+
+	case "status_change":
+		// Market status changed
+		r.handleStatusChange(ticker, lm.Msg.OldStatus, lm.Msg.NewStatus)
+
+	case "settled":
+		// Market settled
+		r.handleSettled(ticker, lm.Msg.Result)
+
+	default:
+		r.logger.Warn("unknown lifecycle event type", "type", eventType)
+	}
+}
+
+// handleMarketCreated handles a new market being created.
+func (r *registryImpl) handleMarketCreated(ctx context.Context, ticker, status string) {
+	// Fetch full market details from REST API
+	apiMarket, err := r.fetchMarket(ctx, ticker)
+	if err != nil {
+		r.logger.Warn("failed to fetch new market", "ticker", ticker, "error", err)
+		return
+	}
+
+	m := apiMarket.ToModel()
+
+	r.state.mu.Lock()
+	r.state.upsertMarketLocked(m)
+	r.state.mu.Unlock()
+
+	// Notify if active
+	if isActive(m.MarketStatus) {
+		r.state.notifyChange(MarketChange{
+			Ticker:    ticker,
+			EventType: "created",
+			NewStatus: m.MarketStatus,
+			Market:    &m,
+		})
+	}
+
+	r.logger.Info("market created via lifecycle",
+		"ticker", ticker,
+		"status", m.MarketStatus,
+	)
+}
+
+// handleStatusChange handles a market status change.
+func (r *registryImpl) handleStatusChange(ticker, oldStatus, newStatus string) {
+	r.state.mu.Lock()
+	existing, ok := r.state.markets[ticker]
+	if !ok {
+		r.state.mu.Unlock()
+		r.logger.Warn("status change for unknown market", "ticker", ticker)
+		return
+	}
+
+	// Update status
+	existing.MarketStatus = newStatus
+
+	// Update active set
+	wasActive := isActive(oldStatus)
+	nowActive := isActive(newStatus)
+
+	if nowActive && !wasActive {
+		r.state.activeSet[ticker] = struct{}{}
+	} else if !nowActive && wasActive {
+		delete(r.state.activeSet, ticker)
+	}
+
+	// Copy for notification (while holding lock)
+	marketCopy := *existing
+	r.state.mu.Unlock()
+
+	// Notify of change
+	r.state.notifyChange(MarketChange{
+		Ticker:    ticker,
+		EventType: "status_change",
+		OldStatus: oldStatus,
+		NewStatus: newStatus,
+		Market:    &marketCopy,
+	})
+
+	r.logger.Debug("market status changed",
+		"ticker", ticker,
+		"old", oldStatus,
+		"new", newStatus,
+	)
+}
+
+// handleSettled handles a market being settled.
+func (r *registryImpl) handleSettled(ticker, result string) {
+	r.state.mu.Lock()
+	existing, ok := r.state.markets[ticker]
+	if ok {
+		existing.MarketStatus = "settled"
+		existing.Result = result
+		delete(r.state.activeSet, ticker)
+	}
+	r.state.mu.Unlock()
+
+	if !ok {
+		return
+	}
+
+	// Notify of settlement
+	r.state.notifyChange(MarketChange{
+		Ticker:    ticker,
+		EventType: "settled",
+		OldStatus: "open",
+		NewStatus: "settled",
+		Market:    nil, // Market no longer active
+	})
+
+	r.logger.Debug("market settled",
+		"ticker", ticker,
+		"result", result,
+	)
 }
 
 // fetchMarket fetches a single market from REST API.

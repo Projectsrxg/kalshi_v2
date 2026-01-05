@@ -48,36 +48,41 @@ This document tracks the implementation status of all components in the Kalshi D
 - [x] Periodic reconciliation loop
 - [x] Market change notifications (channel-based)
 - [x] Active market filtering
-- [~] WebSocket lifecycle message handling (stub only)
-- [x] Unit tests (65.6% coverage)
+- [x] WebSocket lifecycle message handling (created, status_change, settled)
+- [x] Unit tests (75.7% coverage)
 
 ### Connection Manager (`internal/connection/`)
-- [ ] WebSocket connection pool
-- [ ] 144 orderbook connections (up to 7,500 markets each = 1.08M capacity)
-- [ ] 6 global connections (2 ticker, 2 trade, 2 lifecycle - with redundancy)
-- [ ] Reconnection with exponential backoff
-- [ ] Subscription management (subscribe/unsubscribe)
-- [ ] Ping/pong keepalive
-- [ ] Message routing to Message Router
-- [ ] Unit tests
+- [x] WebSocket client (low-level connection handling)
+- [x] WebSocket connection pool
+- [x] 144 orderbook connections (up to 7,500 markets each = 1.08M capacity)
+- [x] 6 global connections (2 ticker, 2 trade, 2 lifecycle - with redundancy)
+- [x] Reconnection with exponential backoff
+- [x] Subscription management (subscribe/unsubscribe)
+- [x] Ping/pong keepalive
+- [x] Sequence gap detection
+- [x] Command/response correlation
+- [x] Message channel output (for Message Router integration)
+- [x] Unit tests (66.1% coverage)
 
 ### Message Router (`internal/router/`)
-- [ ] Message type detection and routing
-- [ ] Non-blocking channel buffers
-- [ ] Buffer overflow handling (drop oldest)
-- [ ] Route to appropriate writers
-- [ ] Metrics for dropped messages
-- [ ] Unit tests
+- [x] Message type detection and routing
+- [x] GrowableBuffer (auto-doubles at 70% capacity, never drops)
+- [x] Route to orderbook, trade, ticker buffers
+- [x] Timestamp conversion (Unix seconds → microseconds)
+- [x] Sequence gap pass-through from Connection Manager
+- [x] Stats tracking (received, routed, parse errors)
+- [x] Unit tests (84.1% coverage)
 
 ### Writers (`internal/writer/`)
-- [ ] Orderbook delta writer
-- [ ] Trade writer
-- [ ] Ticker writer
-- [ ] Snapshot writer
-- [ ] Batch insert logic
-- [ ] Flush interval timer
-- [ ] Buffer management
-- [ ] Unit tests
+- [x] Trade writer (batch insert with ON CONFLICT DO NOTHING)
+- [x] Orderbook delta writer (batch insert)
+- [x] Orderbook snapshot writer (WS snapshots with derived asks)
+- [x] Ticker writer (batch insert)
+- [x] Price conversion (dollars → hundred-thousandths)
+- [x] Side conversion (yes/no → boolean)
+- [x] Batch insert logic with pgx.Batch
+- [x] Flush interval timer
+- [x] Unit tests (62.3% coverage)
 
 ### Snapshot Poller (`internal/poller/`)
 - [x] Poller interface and implementation
@@ -154,13 +159,13 @@ This document tracks the implementation status of all components in the Kalshi D
 ### Unit Tests
 - [x] `internal/api` - 96.2% coverage
 - [x] `internal/config` - 100.0% coverage
+- [x] `internal/connection` - 66.1% coverage
 - [x] `internal/database` - 70.4% coverage
-- [x] `internal/market` - 65.6% coverage
+- [x] `internal/market` - 75.7% coverage
 - [x] `internal/poller` - 98.4% coverage
 - [x] `internal/version` - 100.0% coverage
-- [ ] `internal/connection` - no tests
-- [ ] `internal/router` - no tests
-- [ ] `internal/writer` - no tests
+- [x] `internal/router` - 84.1% coverage
+- [x] `internal/writer` - 62.3% coverage
 - [ ] `internal/metrics` - no tests
 - [ ] `internal/dedup` - no tests
 
@@ -195,21 +200,56 @@ This document tracks the implementation status of all components in the Kalshi D
 
 ## Next Steps (Priority Order)
 
-1. **Connection Manager** - WebSocket pool for real-time data
-2. **Message Router** - Route messages to writers
-3. **Writers** - Persist data to TimescaleDB
-4. **Database Migrations** - Create tables and hypertables
-5. **Integrate components** in gatherer main loop
-6. **Deduplicator** - Poll gatherers and deduplicate to production
-7. **Metrics** - Prometheus instrumentation
-8. **Deployment** - Terraform and production setup
+1. **Database Migrations** - Create tables and hypertables
+2. **Integrate components** in gatherer main loop (Connection Manager + Router + Writers)
+3. **Deduplicator** - Poll gatherers and deduplicate to production
+4. **Metrics** - Prometheus instrumentation
+5. **Deployment** - Terraform and production setup
 
 ---
 
 ## Recent Changes
+
+### 2026-01-05 (continued)
+- **Updated Message Router** to use GrowableBuffer instead of channels:
+  - GrowableBuffer automatically doubles capacity at 70% full
+  - Never drops messages - guarantees delivery to Writers
+  - Blocking Receive() and non-blocking TryReceive() support
+  - Thread-safe with mutex + condition variable pattern
+- **Implemented Writers** (`internal/writer/`):
+  - TradeWriter: Batch inserts to `trades` table with deduplication by `trade_id`
+  - OrderbookWriter: Handles both deltas and snapshots
+    - Deltas: Batch inserts with deduplication by `(ticker, exchange_ts, price, side)`
+    - Snapshots: Derives asks from opposite-side bids, stores as JSONB
+  - TickerWriter: Batch inserts with deduplication by `(ticker, exchange_ts)`
+  - Price conversion: `"0.52"` → `52000` (hundred-thousandths)
+  - Side conversion: `"yes"`/`"no"` → `true`/`false`
+  - Configurable batch size and flush interval
+- **Added unit tests** for writer package (62.3% coverage)
 
 ### 2026-01-05
 - Fixed initial sync timeout (30 minutes for paginated API calls)
 - Health server now starts before initial sync for monitoring
 - Initial sync filters to open + unopened markets only (excludes 1M+ settled/closed)
 - Added pagination progress logging
+- **Implemented Connection Manager** (`internal/connection/`):
+  - WebSocket client with ping/pong keepalive
+  - Connection pool (144 orderbook + 6 global connections)
+  - Subscription management with least-loaded assignment
+  - Command/response correlation for subscribe/unsubscribe
+  - Sequence gap detection for orderbook messages
+  - Reconnection with exponential backoff
+- **Completed WebSocket lifecycle message handling** in Market Registry:
+  - Parse `market_lifecycle` WebSocket messages
+  - Handle `created`, `status_change`, and `settled` events
+  - Fetch new market details from REST API on create
+  - Update active market set on status changes
+- **Added comprehensive unit tests** for connection package (66.1% coverage)
+- **Implemented Message Router** (`internal/router/`):
+  - Parses orderbook_snapshot, orderbook_delta, trade, ticker messages
+  - Routes to typed output channels for Writers
+  - Non-blocking sends with buffer overflow handling (drop + log)
+  - Timestamp conversion (Unix seconds → microseconds)
+  - Sequence gap pass-through for recovery signaling
+  - Stats tracking for monitoring
+- **Added comprehensive unit tests** for router package (71.9% coverage)

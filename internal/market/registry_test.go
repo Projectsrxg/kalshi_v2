@@ -670,3 +670,271 @@ func TestRegistry_Interface(t *testing.T) {
 	// Verify that registryImpl implements Registry interface
 	var _ Registry = reg
 }
+
+// Tests for lifecycle message handling
+
+func TestRegistryImpl_HandleLifecycleMessage_StatusChange(t *testing.T) {
+	cfg := DefaultConfig()
+	client := api.NewClient("http://localhost", "")
+	reg := NewRegistry(cfg, client, nil)
+	impl := reg.(*registryImpl)
+
+	// Add a market first
+	impl.state.upsertMarket(model.Market{
+		Ticker:       "TEST-MARKET",
+		MarketStatus: "open",
+	})
+
+	// Create lifecycle message for status change
+	msg := `{
+		"type": "market_lifecycle",
+		"sid": 1,
+		"msg": {
+			"market_ticker": "TEST-MARKET",
+			"event_type": "status_change",
+			"old_status": "open",
+			"new_status": "closed",
+			"result": "",
+			"ts": 1705328200
+		}
+	}`
+
+	ctx := context.Background()
+	impl.handleLifecycleMessage(ctx, []byte(msg))
+
+	// Verify market status was updated
+	market, ok := impl.GetMarket("TEST-MARKET")
+	if !ok {
+		t.Fatal("market not found")
+	}
+	if market.MarketStatus != "closed" {
+		t.Errorf("MarketStatus = %q, want %q", market.MarketStatus, "closed")
+	}
+
+	// Verify market is no longer active
+	active := impl.GetActiveMarkets()
+	if len(active) != 0 {
+		t.Errorf("expected no active markets after close")
+	}
+}
+
+func TestRegistryImpl_HandleLifecycleMessage_Settled(t *testing.T) {
+	cfg := DefaultConfig()
+	client := api.NewClient("http://localhost", "")
+	reg := NewRegistry(cfg, client, nil)
+	impl := reg.(*registryImpl)
+
+	// Add a market first
+	impl.state.upsertMarket(model.Market{
+		Ticker:       "TEST-MARKET",
+		MarketStatus: "open",
+	})
+
+	// Create lifecycle message for settlement
+	msg := `{
+		"type": "market_lifecycle",
+		"sid": 1,
+		"msg": {
+			"market_ticker": "TEST-MARKET",
+			"event_type": "settled",
+			"old_status": "open",
+			"new_status": "settled",
+			"result": "yes",
+			"ts": 1705328200
+		}
+	}`
+
+	ctx := context.Background()
+	impl.handleLifecycleMessage(ctx, []byte(msg))
+
+	// Verify market was settled
+	market, ok := impl.GetMarket("TEST-MARKET")
+	if !ok {
+		t.Fatal("market not found")
+	}
+	if market.MarketStatus != "settled" {
+		t.Errorf("MarketStatus = %q, want %q", market.MarketStatus, "settled")
+	}
+	if market.Result != "yes" {
+		t.Errorf("Result = %q, want %q", market.Result, "yes")
+	}
+}
+
+func TestRegistryImpl_HandleLifecycleMessage_InvalidJSON(t *testing.T) {
+	cfg := DefaultConfig()
+	client := api.NewClient("http://localhost", "")
+	reg := NewRegistry(cfg, client, nil)
+	impl := reg.(*registryImpl)
+
+	// Invalid JSON should not panic
+	ctx := context.Background()
+	impl.handleLifecycleMessage(ctx, []byte("not json"))
+	// No assertion - just verify it doesn't panic
+}
+
+func TestRegistryImpl_HandleLifecycleMessage_WrongType(t *testing.T) {
+	cfg := DefaultConfig()
+	client := api.NewClient("http://localhost", "")
+	reg := NewRegistry(cfg, client, nil)
+	impl := reg.(*registryImpl)
+
+	// Message with wrong type should be ignored
+	msg := `{
+		"type": "ticker",
+		"sid": 1,
+		"msg": {}
+	}`
+
+	ctx := context.Background()
+	impl.handleLifecycleMessage(ctx, []byte(msg))
+	// No assertion - just verify it doesn't panic
+}
+
+func TestRegistryImpl_HandleStatusChange_UnknownMarket(t *testing.T) {
+	cfg := DefaultConfig()
+	client := api.NewClient("http://localhost", "")
+	reg := NewRegistry(cfg, client, nil)
+	impl := reg.(*registryImpl)
+
+	// Status change for unknown market should log warning but not panic
+	impl.handleStatusChange("UNKNOWN", "open", "closed")
+	// No assertion - just verify it doesn't panic
+}
+
+func TestRegistryImpl_HandleSettled_UnknownMarket(t *testing.T) {
+	cfg := DefaultConfig()
+	client := api.NewClient("http://localhost", "")
+	reg := NewRegistry(cfg, client, nil)
+	impl := reg.(*registryImpl)
+
+	// Settlement for unknown market should not panic
+	impl.handleSettled("UNKNOWN", "yes")
+	// No assertion - just verify it doesn't panic
+}
+
+func TestRegistryImpl_HandleMarketCreated(t *testing.T) {
+	// Set up mock server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/markets/NEW-MARKET" {
+			json.NewEncoder(w).Encode(map[string]any{
+				"market": map[string]any{
+					"ticker":       "NEW-MARKET",
+					"event_ticker": "EVENT-1",
+					"title":        "New Market",
+					"status":       "active",
+				},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	cfg := DefaultConfig()
+	client := api.NewClient(server.URL, "")
+	reg := NewRegistry(cfg, client, nil)
+	impl := reg.(*registryImpl)
+
+	ctx := context.Background()
+	impl.handleMarketCreated(ctx, "NEW-MARKET", "active")
+
+	// Verify market was added
+	market, ok := impl.GetMarket("NEW-MARKET")
+	if !ok {
+		t.Fatal("market not found")
+	}
+	if market.Ticker != "NEW-MARKET" {
+		t.Errorf("Ticker = %q, want %q", market.Ticker, "NEW-MARKET")
+	}
+}
+
+func TestRegistryImpl_HandleStatusChange_ToActive(t *testing.T) {
+	cfg := DefaultConfig()
+	client := api.NewClient("http://localhost", "")
+	reg := NewRegistry(cfg, client, nil)
+	impl := reg.(*registryImpl)
+
+	// Add a closed market
+	impl.state.upsertMarket(model.Market{
+		Ticker:       "TEST-MARKET",
+		MarketStatus: "closed",
+	})
+
+	// Verify not active initially
+	active := impl.GetActiveMarkets()
+	if len(active) != 0 {
+		t.Errorf("expected no active markets initially")
+	}
+
+	// Handle status change to active
+	impl.handleStatusChange("TEST-MARKET", "closed", "open")
+
+	// Verify now active
+	active = impl.GetActiveMarkets()
+	if len(active) != 1 {
+		t.Errorf("expected 1 active market after status change")
+	}
+}
+
+func TestLifecycleLoop_ContextCancellation(t *testing.T) {
+	cfg := DefaultConfig()
+	client := api.NewClient("http://localhost", "")
+	reg := NewRegistry(cfg, client, nil)
+	impl := reg.(*registryImpl)
+
+	// Set up lifecycle channel
+	lifecycleCh := make(chan []byte, 1)
+	impl.state.lifecycle = lifecycleCh
+
+	// Create context that we'll cancel
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Run lifecycle loop in goroutine
+	done := make(chan struct{})
+	go func() {
+		impl.lifecycleLoop(ctx)
+		close(done)
+	}()
+
+	// Cancel context
+	cancel()
+
+	// Verify loop exits
+	select {
+	case <-done:
+		// Success
+	case <-time.After(time.Second):
+		t.Error("lifecycle loop did not exit after context cancellation")
+	}
+}
+
+func TestLifecycleLoop_ChannelClosed(t *testing.T) {
+	cfg := DefaultConfig()
+	client := api.NewClient("http://localhost", "")
+	reg := NewRegistry(cfg, client, nil)
+	impl := reg.(*registryImpl)
+
+	// Set up lifecycle channel
+	lifecycleCh := make(chan []byte, 1)
+	impl.state.lifecycle = lifecycleCh
+
+	ctx := context.Background()
+
+	// Run lifecycle loop in goroutine
+	done := make(chan struct{})
+	go func() {
+		impl.lifecycleLoop(ctx)
+		close(done)
+	}()
+
+	// Close channel
+	close(lifecycleCh)
+
+	// Verify loop exits
+	select {
+	case <-done:
+		// Success
+	case <-time.After(time.Second):
+		t.Error("lifecycle loop did not exit after channel closed")
+	}
+}
