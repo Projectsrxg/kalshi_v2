@@ -46,7 +46,8 @@ api:
   max_retries: 3
   retry_backoff: 1s
 
-# Local TimescaleDB (time-series data)
+# Local TimescaleDB (time-series data only)
+# Note: Gatherers only store time-series data. Market metadata lives in-memory (Market Registry).
 timescaledb:
   host: "localhost"
   port: 5432
@@ -57,21 +58,6 @@ timescaledb:
   pool:
     min_conns: 2
     max_conns: 10
-    max_conn_lifetime: 1h
-    max_conn_idle_time: 30m
-    health_check_period: 1m
-
-# Local PostgreSQL (relational data)
-postgresql:
-  host: "localhost"
-  port: 5433
-  database: "kalshi_meta"
-  user: "gatherer"
-  password: "${POSTGRESQL_PASSWORD}"     # Required
-  ssl_mode: "prefer"
-  pool:
-    min_conns: 2
-    max_conns: 5
     max_conn_lifetime: 1h
     max_conn_idle_time: 30m
     health_check_period: 1m
@@ -138,7 +124,6 @@ metrics:
 | `gatherer_id` | - | Unique identifier for this gatherer |
 | `api.api_key` | `KALSHI_API_KEY` | Kalshi API key |
 | `timescaledb.password` | `TIMESCALEDB_PASSWORD` | TimescaleDB password |
-| `postgresql.password` | `POSTGRESQL_PASSWORD` | PostgreSQL password |
 
 ### Default Values
 
@@ -170,7 +155,8 @@ server:
   read_timeout: 10s
   write_timeout: 10s
 
-# Gatherer connections (read from each)
+# Gatherer connections (read time-series data from each)
+# Note: Gatherers only have TimescaleDB for time-series data. No PostgreSQL.
 gatherers:
   - id: "gatherer-1"
     host: "10.0.1.10"
@@ -180,12 +166,6 @@ gatherers:
       user: "dedup_reader"
       password: "${GATHERER1_TS_PASSWORD}"
       ssl_mode: "require"
-    postgresql:
-      port: 5433
-      database: "kalshi_meta"
-      user: "dedup_reader"
-      password: "${GATHERER1_PG_PASSWORD}"
-      ssl_mode: "require"
   - id: "gatherer-2"
     host: "10.0.2.10"
     timescaledb:
@@ -194,12 +174,6 @@ gatherers:
       user: "dedup_reader"
       password: "${GATHERER2_TS_PASSWORD}"
       ssl_mode: "require"
-    postgresql:
-      port: 5433
-      database: "kalshi_meta"
-      user: "dedup_reader"
-      password: "${GATHERER2_PG_PASSWORD}"
-      ssl_mode: "require"
   - id: "gatherer-3"
     host: "10.0.3.10"
     timescaledb:
@@ -207,12 +181,6 @@ gatherers:
       database: "kalshi_ts"
       user: "dedup_reader"
       password: "${GATHERER3_TS_PASSWORD}"
-      ssl_mode: "require"
-    postgresql:
-      port: 5433
-      database: "kalshi_meta"
-      user: "dedup_reader"
-      password: "${GATHERER3_PG_PASSWORD}"
       ssl_mode: "require"
 
 # Production RDS (write target)
@@ -229,7 +197,8 @@ production:
     max_conns: 20
     max_conn_lifetime: 1h
 
-# Sync configuration
+# Sync configuration (time-series tables only)
+# Note: Market/event metadata is managed separately via REST API sync to production RDS.
 sync:
   # Per-table configuration
   tables:
@@ -249,14 +218,12 @@ sync:
       poll_interval: 100ms
       batch_size: 5000
       parallel: true
-    markets:
-      poll_interval: 5s
-      batch_size: 1000
-      parallel: false
-    events:
-      poll_interval: 30s
-      batch_size: 100
-      parallel: false
+
+# Kalshi API (for syncing market/event metadata to production RDS)
+api:
+  base_url: "https://api.elections.kalshi.com/trade-api/v2"
+  api_key: "${KALSHI_API_KEY}"
+  sync_interval: 5m                        # How often to refresh markets/events
 
 # S3 export configuration
 s3:
@@ -304,7 +271,7 @@ metrics:
 |-------|---------------------|-------------|
 | `production.password` | `PRODUCTION_PASSWORD` | Production RDS password |
 | `gatherers[*].timescaledb.password` | `GATHERER{N}_TS_PASSWORD` | Gatherer TimescaleDB password |
-| `gatherers[*].postgresql.password` | `GATHERER{N}_PG_PASSWORD` | Gatherer PostgreSQL password |
+| `api.api_key` | `KALSHI_API_KEY` | Kalshi API key (for market/event sync) |
 
 ### Gatherer Connection Requirements
 
@@ -399,10 +366,9 @@ secret, _ := sm.GetSecretValue(&secretsmanager.GetSecretValueInput{
 
 | Secret | Parameter Store Path | Used By |
 |--------|---------------------|---------|
-| Kalshi API Key | `/kalshi/prod/api-key` | Gatherer |
+| Kalshi API Key | `/kalshi/prod/api-key` | Gatherer, Deduplicator |
 | Kalshi API Secret | `/kalshi/prod/api-secret` | Gatherer |
 | TimescaleDB Password | `/kalshi/prod/{gatherer-id}/ts-password` | Gatherer |
-| PostgreSQL Password | `/kalshi/prod/{gatherer-id}/pg-password` | Gatherer |
 | Production RDS Password | `/kalshi/prod/rds-password` | Deduplicator |
 | Gatherer Reader Password | `/kalshi/prod/gatherer-reader-password` | Deduplicator |
 
@@ -421,10 +387,6 @@ export KALSHI_API_KEY=$(aws ssm get-parameter \
 
 export TIMESCALEDB_PASSWORD=$(aws ssm get-parameter \
   --name "/kalshi/prod/${GATHERER_ID}/ts-password" \
-  --with-decryption --query 'Parameter.Value' --output text)
-
-export POSTGRESQL_PASSWORD=$(aws ssm get-parameter \
-  --name "/kalshi/prod/${GATHERER_ID}/pg-password" \
   --with-decryption --query 'Parameter.Value' --output text)
 
 # Start gatherer
@@ -447,9 +409,6 @@ func (c *GathererConfig) Validate() error {
     }
     if c.TimescaleDB.Password == "" {
         return errors.New("timescaledb.password is required")
-    }
-    if c.PostgreSQL.Password == "" {
-        return errors.New("postgresql.password is required")
     }
     if c.ConnectionManager.MaxConnections < 1 {
         return errors.New("connection_manager.max_connections must be >= 1")
@@ -498,14 +457,6 @@ timescaledb:
   password: "devpassword"
   ssl_mode: "disable"
 
-postgresql:
-  host: "localhost"
-  port: 5433
-  database: "kalshi_meta_dev"
-  user: "kalshi"
-  password: "devpassword"
-  ssl_mode: "disable"
-
 connection_manager:
   max_connections: 10  # Reduced for dev
 
@@ -535,14 +486,6 @@ timescaledb:
   pool:
     min_conns: 5
     max_conns: 20
-
-postgresql:
-  host: "localhost"
-  port: 5433
-  database: "kalshi_meta"
-  user: "gatherer"
-  password: "${POSTGRESQL_PASSWORD}"
-  ssl_mode: "require"
 
 connection_manager:
   max_connections: 150

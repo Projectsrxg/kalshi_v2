@@ -29,9 +29,9 @@ type APIConfig struct {
 	MaxRetries int           `yaml:"max_retries"`
 }
 
-// DatabaseConfig holds both database connections.
+// DatabaseConfig holds the TimescaleDB connection for time-series data.
+// Note: Gatherers only use TimescaleDB. Market metadata lives in-memory (Market Registry).
 type DatabaseConfig struct {
-	Postgres  DBConfig `yaml:"postgres"`
 	Timescale DBConfig `yaml:"timescale"`
 }
 
@@ -49,13 +49,13 @@ type DBConfig struct {
 
 // ConnectionsConfig holds WebSocket connection manager settings.
 type ConnectionsConfig struct {
-	OrderbookCount        int           `yaml:"orderbook_count"`
-	MarketsPerConnection  int           `yaml:"markets_per_connection"`
-	GlobalCount           int           `yaml:"global_count"`
-	ReconnectBaseDelay    time.Duration `yaml:"reconnect_base_delay"`
-	ReconnectMaxDelay     time.Duration `yaml:"reconnect_max_delay"`
-	PingInterval          time.Duration `yaml:"ping_interval"`
-	ReadTimeout           time.Duration `yaml:"read_timeout"`
+	OrderbookCount       int           `yaml:"orderbook_count"`
+	MarketsPerConnection int           `yaml:"markets_per_connection"`
+	GlobalCount          int           `yaml:"global_count"`
+	ReconnectBaseDelay   time.Duration `yaml:"reconnect_base_delay"`
+	ReconnectMaxDelay    time.Duration `yaml:"reconnect_max_delay"`
+	PingInterval         time.Duration `yaml:"ping_interval"`
+	ReadTimeout          time.Duration `yaml:"read_timeout"`
 }
 
 // WritersConfig holds batch writer settings.

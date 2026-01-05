@@ -13,14 +13,12 @@ Kalshi Data Platform - a real-time data capture system for Kalshi prediction mar
 ```mermaid
 flowchart TD
     subgraph G["Gatherer (x3, one per AZ)"]
-        MR[Market Registry<br/>REST + WS] --> CM[Connection Manager<br/>WS Pool]
+        MR[Market Registry<br/>In-Memory] --> CM[Connection Manager<br/>WS Pool]
         CM --> RT[Message Router]
-        MR --> PG[(PostgreSQL<br/>markets/events)]
         RT --> TS[(TimescaleDB<br/>trades/orderbook)]
     end
 
     TS --> DEDUP[Deduplicator<br/>polls all 3]
-    PG --> DEDUP
     DEDUP --> PROD[(Production RDS<br/>TimescaleDB)]
     DEDUP --> S3[(S3)]
 ```
@@ -29,13 +27,13 @@ flowchart TD
 
 | Component | Description |
 |-----------|-------------|
-| **Market Registry** | Discovers markets via REST API, receives live updates via `market_lifecycle` WebSocket |
+| **Market Registry** | Discovers markets via REST API, receives live updates via `market_lifecycle` WebSocket. In-memory only (no persistence). |
 | **Connection Manager** | Maintains 150 WebSocket connections per gatherer (144 orderbook + 6 global) |
 | **Message Router** | Routes WebSocket messages to appropriate writers with non-blocking buffers |
 | **Snapshot Poller** | Polls REST API every 15 minutes for orderbook snapshots as backup |
 | **Writers** | Batch writers for orderbook deltas, trades, tickers, and snapshots |
-| **Local Storage** | TimescaleDB (time-series) + PostgreSQL (relational) per gatherer |
-| **Deduplicator** | Polls all gatherers via cursor-based sync, deduplicates, writes to production RDS |
+| **Local Storage** | TimescaleDB per gatherer for time-series data (trades, orderbook_deltas, snapshots, tickers) |
+| **Deduplicator** | Polls all gatherers via cursor-based sync, deduplicates time-series data, writes to production RDS |
 
 ### Key Design Decisions
 

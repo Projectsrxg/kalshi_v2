@@ -43,8 +43,7 @@ func (c *GathererConfig) applyDefaults() {
 		c.API.MaxRetries = DefaultMaxRetries
 	}
 
-	// Database defaults
-	applyDBDefaults(&c.Database.Postgres)
+	// Database defaults (TimescaleDB only)
 	applyDBDefaults(&c.Database.Timescale)
 
 	// Connections defaults

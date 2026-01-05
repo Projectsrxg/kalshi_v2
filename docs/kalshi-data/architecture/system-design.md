@@ -11,31 +11,23 @@ flowchart TD
     subgraph AZ1["AZ-a"]
         EC2_1[Gatherer 1]
         TS1[(TimescaleDB)]
-        PG1[(PostgreSQL)]
         EC2_1 --> TS1
-        EC2_1 --> PG1
     end
     subgraph AZ2["AZ-b"]
         EC2_2[Gatherer 2]
         TS2[(TimescaleDB)]
-        PG2[(PostgreSQL)]
         EC2_2 --> TS2
-        EC2_2 --> PG2
     end
     subgraph AZ3["AZ-c"]
         EC2_3[Gatherer 3]
         TS3[(TimescaleDB)]
-        PG3[(PostgreSQL)]
         EC2_3 --> TS3
-        EC2_3 --> PG3
     end
 
-    TS1 --> DEDUP[Deduplicator EC2]
+    KALSHI[Kalshi API] --> DEDUP[Deduplicator EC2]
+    TS1 --> DEDUP
     TS2 --> DEDUP
     TS3 --> DEDUP
-    PG1 --> DEDUP
-    PG2 --> DEDUP
-    PG3 --> DEDUP
     DEDUP --> PROD[(Production RDS\nTimescaleDB)]
     DEDUP --> S3[(S3 Cold Storage)]
 ```
@@ -70,7 +62,6 @@ flowchart TD
 
         subgraph Storage["Local Storage"]
             TS[(TimescaleDB\ntrades/orderbook)]
-            PG[(PostgreSQL\nmarkets/events)]
         end
     end
 
@@ -96,7 +87,6 @@ flowchart TD
     TW --> TS
     TK --> TS
     SW --> TS
-    MR --> PG
 ```
 
 ### Market Registry
@@ -111,7 +101,7 @@ Discovers and tracks markets via REST API and WebSocket.
 | Reconciliation | Periodic `GET /markets` as backup (every 5-10 min) |
 | Event/Series discovery | `GET /events`, `GET /series/{ticker}` for metadata |
 | Subscription management | Tell Connection Manager which markets to subscribe |
-| Metadata storage | Write to local `markets` and `events` tables |
+| In-memory cache | Store market state in memory (no database persistence) |
 
 **Data Sources:**
 
@@ -182,7 +172,7 @@ Demultiplexes incoming WebSocket messages.
 |--------------|-------|
 | Instance Type | t4g.2xlarge (8 vCPU, 32GB RAM, ARM) |
 | Capacity | 150 WebSocket connections, 2000 msg/s |
-| Local DBs | TimescaleDB (trades, orderbook) + PostgreSQL (markets, events) |
+| Local DB | TimescaleDB (trades, orderbook) |
 | Storage | 200GB gp3 EBS |
 | Cost | ~$170/month each (Savings Plan) |
 
@@ -232,8 +222,7 @@ s3://kalshi-data-prod/
 | Component | RAM |
 |-----------|-----|
 | 150 WS connections × 50MB | 7.5GB |
-| TimescaleDB (shared_buffers) | 6GB |
-| PostgreSQL (shared_buffers) | 2GB |
+| TimescaleDB (shared_buffers) | 8GB |
 | Go application + buffers | 4GB |
 | OS + headroom | 12.5GB |
 | **Total** | **32GB** |

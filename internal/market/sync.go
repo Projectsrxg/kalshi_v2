@@ -7,21 +7,41 @@ import (
 	"github.com/rickgao/kalshi-data/internal/api"
 )
 
-// initialSync fetches all markets from REST API on startup.
+// initialSync fetches active markets from REST API on startup.
+// Fetches open and unopened markets, excluding settled/closed (1M+ historical).
 func (r *registryImpl) initialSync(ctx context.Context) error {
 	// Check exchange status first.
 	if err := r.checkExchangeStatus(ctx); err != nil {
 		return err
 	}
 
-	r.logger.Info("starting initial market sync")
+	r.logger.Info("starting initial market sync (open + unopened markets)")
 	start := time.Now()
 
-	// Fetch all markets.
-	apiMarkets, err := r.rest.GetAllMarkets(ctx)
+	// Fetch open markets.
+	r.logger.Info("fetching open markets")
+	openMarkets, err := r.rest.GetAllMarketsWithOptions(ctx, api.GetMarketsOptions{
+		Status: "open",
+	})
 	if err != nil {
 		return err
 	}
+	r.logger.Info("fetched open markets", "count", len(openMarkets))
+
+	// Fetch unopened markets.
+	r.logger.Info("fetching unopened markets")
+	unopenedMarkets, err := r.rest.GetAllMarketsWithOptions(ctx, api.GetMarketsOptions{
+		Status: "unopened",
+	})
+	if err != nil {
+		return err
+	}
+	r.logger.Info("fetched unopened markets", "count", len(unopenedMarkets))
+
+	// Combine both lists.
+	apiMarkets := make([]api.APIMarket, 0, len(openMarkets)+len(unopenedMarkets))
+	apiMarkets = append(apiMarkets, openMarkets...)
+	apiMarkets = append(apiMarkets, unopenedMarkets...)
 
 	r.state.mu.Lock()
 	for _, am := range apiMarkets {
@@ -87,15 +107,32 @@ func (r *registryImpl) reconciliationLoop(ctx context.Context) {
 	}
 }
 
-// reconcile fetches all markets and detects changes.
+// reconcile fetches open and unopened markets and detects changes.
 func (r *registryImpl) reconcile(ctx context.Context) {
 	start := time.Now()
 
-	apiMarkets, err := r.rest.GetAllMarkets(ctx)
+	// Fetch open markets.
+	openMarkets, err := r.rest.GetAllMarketsWithOptions(ctx, api.GetMarketsOptions{
+		Status: "open",
+	})
 	if err != nil {
-		r.logger.Error("reconciliation failed", "err", err)
+		r.logger.Error("reconciliation failed fetching open markets", "err", err)
 		return
 	}
+
+	// Fetch unopened markets.
+	unopenedMarkets, err := r.rest.GetAllMarketsWithOptions(ctx, api.GetMarketsOptions{
+		Status: "unopened",
+	})
+	if err != nil {
+		r.logger.Error("reconciliation failed fetching unopened markets", "err", err)
+		return
+	}
+
+	// Combine both lists.
+	apiMarkets := make([]api.APIMarket, 0, len(openMarkets)+len(unopenedMarkets))
+	apiMarkets = append(apiMarkets, openMarkets...)
+	apiMarkets = append(apiMarkets, unopenedMarkets...)
 
 	var created, changed int
 

@@ -10,6 +10,17 @@ TimescaleDB schema for individual gatherer instances. Production/Aurora schema d
 2. **Microsecond precision** — All timestamps as `BIGINT` (µs since epoch)
 3. **Integer pricing** — Hundred-thousandths of a dollar (0-100,000) to avoid float errors
 4. **TimescaleDB hypertables** — Automatic partitioning by time
+5. **Time-series only** — Gatherers store only time-series data; market metadata lives in memory (Market Registry)
+
+---
+
+## Architecture Note
+
+Gatherers maintain an **in-memory Market Registry** for active markets. No relational tables (series, events, markets) are stored locally—these exist only in the production RDS. This simplifies the gatherer architecture:
+
+- Market Registry discovers markets via REST API and WebSocket
+- Time-series data (trades, orderbook_deltas, snapshots, tickers) flows to local TimescaleDB
+- Deduplicator syncs only time-series data to production RDS
 
 ---
 
@@ -17,45 +28,6 @@ TimescaleDB schema for individual gatherer instances. Production/Aurora schema d
 
 ```mermaid
 erDiagram
-    series ||--o{ events : contains
-    events ||--o{ markets : contains
-    markets ||--o{ orderbook_deltas : has
-    markets ||--o{ orderbook_snapshots : has
-    markets ||--o{ trades : has
-    markets ||--o{ tickers : has
-
-    series {
-        varchar ticker PK
-        text title
-        varchar category
-        varchar frequency
-        jsonb tags
-    }
-
-    events {
-        varchar event_ticker PK
-        varchar series_ticker FK
-        text title
-        varchar category
-        bigint created_ts
-    }
-
-    markets {
-        varchar ticker PK
-        varchar event_ticker FK
-        text title
-        varchar market_status
-        varchar trading_status
-        varchar result
-        int yes_bid
-        int yes_ask
-        int last_price
-        bigint volume
-        bigint open_ts
-        bigint close_ts
-        bigint expiration_ts
-    }
-
     orderbook_deltas {
         varchar ticker PK
         bigint exchange_ts PK
@@ -150,113 +122,6 @@ Both stored as `BIGINT` in microseconds (µs since Unix epoch).
 - All logic in one place (Go binary)
 - Easier testing and debugging
 - Portable across database instances
-
----
-
-## Relational Tables
-
-### series
-
-```sql
-CREATE TABLE series (
-    ticker          VARCHAR(128) PRIMARY KEY,
-    title           TEXT,
-    category        VARCHAR(64),
-    frequency       VARCHAR(32),
-    tags            JSONB,
-    settlement_sources JSONB,
-    updated_at      BIGINT NOT NULL
-);
-
-CREATE INDEX idx_series_category ON series(category);
-```
-
-### events
-
-```sql
-CREATE TABLE events (
-    event_ticker    VARCHAR(128) PRIMARY KEY,
-    series_ticker   VARCHAR(128) REFERENCES series(ticker),
-    title           TEXT,
-    category        VARCHAR(64),
-    created_ts      BIGINT,
-    updated_at      BIGINT NOT NULL
-);
-
-CREATE INDEX idx_events_series ON events(series_ticker);
-```
-
-### markets
-
-```sql
-CREATE TABLE markets (
-    ticker          VARCHAR(128) PRIMARY KEY,
-    event_ticker    VARCHAR(128) REFERENCES events(event_ticker),
-    title           TEXT,
-    subtitle        TEXT,
-
-    -- Status (see "Market Status Values" section below)
-    market_status   VARCHAR(16) NOT NULL,
-    trading_status  VARCHAR(16) NOT NULL,
-    market_type     VARCHAR(8) NOT NULL,
-    result          VARCHAR(8),
-
-    -- Current prices (from REST, updated periodically)
-    yes_bid         INTEGER,
-    yes_ask         INTEGER,
-    last_price      INTEGER,
-
-    -- Volume
-    volume          BIGINT,
-    volume_24h      BIGINT,
-    open_interest   BIGINT,
-
-    -- Timing (µs since epoch)
-    open_ts         BIGINT,
-    close_ts        BIGINT,
-    expiration_ts   BIGINT,
-    created_ts      BIGINT,
-    updated_at      BIGINT NOT NULL,
-
-    CONSTRAINT valid_market_status CHECK (market_status IN ('initialized', 'inactive', 'active', 'closed', 'determined', 'disputed', 'amended', 'finalized')),
-    CONSTRAINT valid_market_type CHECK (market_type IN ('binary', 'scalar'))
-);
-
-CREATE INDEX idx_markets_event ON markets(event_ticker);
-CREATE INDEX idx_markets_status ON markets(market_status, trading_status);
-```
-
-### Market Status Values
-
-The Kalshi API uses two different status representations:
-
-#### 1. Gatherer Status (8 values)
-
-The gatherer stores the granular `market_status` from Kalshi API:
-
-| Gatherer Status | Description |
-|-----------------|-------------|
-| `initialized` | Market created, not yet active |
-| `inactive` | Temporarily inactive |
-| `active` | Open for trading |
-| `closed` | Trading closed, awaiting settlement |
-| `determined` | Outcome determined |
-| `disputed` | Settlement disputed |
-| `amended` | Settlement amended |
-| `finalized` | Fully settled, final |
-
-#### 2. Production Status (4 values) — Authoritative Mapping
-
-The deduplicator converts gatherer statuses to simplified production statuses when writing to production RDS:
-
-| Production Status | Gatherer Statuses | Description |
-|-------------------|-------------------|-------------|
-| `unopened` | `initialized`, `inactive` | Not yet tradeable |
-| `open` | `active` | Currently tradeable |
-| `closed` | `closed`, `disputed` | Trading ended, not yet settled |
-| `settled` | `determined`, `amended`, `finalized` | Final outcome known |
-
-**Implementation:** The deduplicator performs this mapping in the `syncMarkets()` function before upserting to production.
 
 ---
 
@@ -447,8 +312,6 @@ Uses Kalshi's exchange-provided identifiers for deduplication:
 | `orderbook_deltas` | `(ticker, exchange_ts, price, side)` | `ON CONFLICT DO NOTHING` |
 | `orderbook_snapshots` | `(ticker, snapshot_ts, source)` | `ON CONFLICT DO NOTHING` |
 | `tickers` | `(ticker, exchange_ts)` | `ON CONFLICT DO NOTHING` |
-| `markets` | `ticker` | `ON CONFLICT DO UPDATE` |
-| `events` | `event_ticker` | `ON CONFLICT DO UPDATE` |
 
 ---
 
@@ -508,20 +371,17 @@ for rows.Next() {
 }
 ```
 
-### Market activity (last 24h)
+### Trade volume by ticker (last 24h)
 
 ```sql
 -- Pass cutoff timestamp from Go: time.Now().Add(-24*time.Hour).UnixMicro()
 SELECT
-    m.ticker,
-    m.title,
-    COUNT(t.trade_id) as trade_count,
-    SUM(t.size) as total_volume
-FROM markets m
-LEFT JOIN trades t ON t.ticker = m.ticker
-    AND t.exchange_ts > $2  -- cutoff_ts parameter
-WHERE m.market_status = 'open'
-GROUP BY m.ticker, m.title
+    ticker,
+    COUNT(trade_id) as trade_count,
+    SUM(size) as total_volume
+FROM trades
+WHERE exchange_ts > $1  -- cutoff_ts parameter
+GROUP BY ticker
 ORDER BY total_volume DESC
 LIMIT 100;
 ```
@@ -529,5 +389,7 @@ LIMIT 100;
 **Go code:**
 ```go
 cutoffTs := time.Now().Add(-24 * time.Hour).UnixMicro()
-rows, err := db.Query(query, ticker, cutoffTs)
+rows, err := db.Query(query, cutoffTs)
 ```
+
+**Note:** For queries joining with market metadata (title, status), use the production RDS where markets table exists.

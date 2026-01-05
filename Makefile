@@ -1,4 +1,4 @@
-.PHONY: build build-linux-arm64 test clean fmt lint vet
+.PHONY: build build-linux-arm64 test clean fmt lint vet up down dev
 
 # Build settings
 BINARY_DIR := bin
@@ -72,3 +72,49 @@ mocks:
 # Tidy dependencies
 tidy:
 	$(GO) mod tidy
+
+# =============================================================================
+# Docker commands
+# =============================================================================
+
+# Start infrastructure (TimescaleDB, MinIO)
+up:
+	docker-compose up -d
+	@echo "Waiting for TimescaleDB to be ready..."
+	@sleep 5
+	@docker-compose ps
+
+# Stop infrastructure
+down:
+	docker-compose down
+
+# Stop and remove volumes (clean slate)
+down-clean:
+	docker-compose down -v
+
+# Start with monitoring (Prometheus, Grafana)
+up-monitoring:
+	docker-compose --profile monitoring up -d
+
+# View logs
+logs:
+	docker-compose logs -f
+
+# Check database is ready
+db-ready:
+	@docker-compose exec timescaledb pg_isready -U postgres
+
+# Connect to database
+db-shell:
+	docker-compose exec timescaledb psql -U postgres -d kalshi_ts
+
+# Full local development (start infra + run gatherer)
+dev: up
+	@echo "Infrastructure started. Run 'make run-gatherer' to start the gatherer."
+	@echo ""
+	@echo "Or set your Kalshi API credentials first:"
+	@echo "  export KALSHI_API_KEY=your-key"
+	@echo "  export KALSHI_API_SECRET=your-secret"
+	@echo ""
+	@echo "Then run:"
+	@echo "  make run-gatherer"

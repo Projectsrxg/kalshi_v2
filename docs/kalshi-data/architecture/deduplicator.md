@@ -9,13 +9,16 @@ Merges data from all gatherers, removes duplicates, writes to production RDS.
 ```mermaid
 flowchart LR
     subgraph Gatherers
-        G1[(Gatherer 1\nTimescaleDB + PG)]
-        G2[(Gatherer 2\nTimescaleDB + PG)]
-        G3[(Gatherer 3\nTimescaleDB + PG)]
+        G1[(Gatherer 1\nTimescaleDB)]
+        G2[(Gatherer 2\nTimescaleDB)]
+        G3[(Gatherer 3\nTimescaleDB)]
     end
 
+    KALSHI[Kalshi API]
+
     subgraph Deduplicator
-        POLL[Poller]
+        POLL[Time-Series Poller]
+        API_SYNC[API Sync]
         DEDUP[Deduplication]
         WRITE[Writer]
     end
@@ -23,16 +26,19 @@ flowchart LR
     G1 --> POLL
     G2 --> POLL
     G3 --> POLL
+    KALSHI --> API_SYNC
     POLL --> DEDUP
+    API_SYNC --> DEDUP
     DEDUP --> WRITE
     WRITE --> PROD[(Production RDS)]
     WRITE --> S3[(S3)]
 ```
 
-Each gatherer independently collects ALL markets. The deduplicator:
-1. Polls new records from all gatherers
-2. Deduplicates by primary key
-3. Writes unique records to production RDS
+Each gatherer independently collects ALL markets (time-series data only). The deduplicator:
+1. Polls new time-series records from all gatherers
+2. Syncs market metadata directly from Kalshi API
+3. Deduplicates by primary key
+4. Writes unique records to production RDS
 
 ---
 
@@ -77,16 +83,17 @@ ORDER BY received_at ASC
 LIMIT $batch_size;
 ```
 
-### Relational Tables
+### Market Metadata (from Kalshi API)
 
-Poll by `updated_at` timestamp.
+Market metadata (series, events, markets) is synced directly from the Kalshi REST API, not from gatherers.
 
-```sql
--- Poll updated markets from gatherer
-SELECT * FROM markets
-WHERE updated_at > $last_sync_ts
-ORDER BY updated_at ASC
-LIMIT $batch_size;
+```go
+// Sync markets from Kalshi API every 5 minutes
+markets, err := kalshiClient.GetAllMarkets(ctx)
+for _, market := range markets {
+    // Upsert to production RDS
+    db.UpsertMarket(ctx, market)
+}
 ```
 
 ---
@@ -118,17 +125,17 @@ VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (ticker, exchange_ts, price, side) DO NOTHING;
 ```
 
-### Relational Tables (Upsert)
+### Market Metadata (Upsert from API)
 
-Use `INSERT ... ON CONFLICT DO UPDATE`. Latest data wins.
+Market metadata is synced from Kalshi API (not gatherers). Use `INSERT ... ON CONFLICT DO UPDATE`. Latest data wins.
 
-| Table | Primary Key | Update Fields |
-|-------|-------------|---------------|
-| `series` | `ticker` | All except PK |
-| `events` | `event_ticker` | All except PK |
-| `markets` | `ticker` | All except PK (with status mapping) |
+| Table | Primary Key | Source |
+|-------|-------------|--------|
+| `series` | `ticker` | Kalshi REST API |
+| `events` | `event_ticker` | Kalshi REST API |
+| `markets` | `ticker` | Kalshi REST API |
 
-**Status Mapping:** The deduplicator converts gatherer's 8-value `market_status` to production's 4-value status. See [Authoritative Mapping](data-model.md#2-production-status-4-values--authoritative-mapping).
+**Status Mapping:** The deduplicator converts Kalshi's 8-value `status` to production's 4-value status. See [Authoritative Mapping](data-model.md#2-production-status-4-values--authoritative-mapping).
 
 ```sql
 INSERT INTO markets (ticker, event_ticker, title, market_status, ...)
@@ -137,7 +144,7 @@ ON CONFLICT (ticker) DO UPDATE SET
     event_ticker = EXCLUDED.event_ticker,
     title = EXCLUDED.title,
     market_status = EXCLUDED.market_status,
-    updated_at = EXCLUDED.updated_at;
+    updated_at = NOW();
 ```
 
 ---
@@ -203,15 +210,20 @@ sequenceDiagram
 
 ```
 deduplicator -> gatherer-1 TimescaleDB (read-only)
-deduplicator -> gatherer-1 PostgreSQL (read-only)
 deduplicator -> gatherer-2 TimescaleDB (read-only)
-deduplicator -> gatherer-2 PostgreSQL (read-only)
 deduplicator -> gatherer-3 TimescaleDB (read-only)
-deduplicator -> gatherer-3 PostgreSQL (read-only)
 ```
 
-- 6 read connections (2 per gatherer)
+- 3 read connections (1 per gatherer)
 - Connection pooling via pgbouncer or app-level
+
+### Kalshi API Connection
+
+```
+deduplicator -> Kalshi REST API (read-only)
+```
+
+- Syncs market metadata (series, events, markets) every 5 minutes
 
 ### Production Connection
 

@@ -132,21 +132,11 @@ func TestConnect_InvalidConnString(t *testing.T) {
 	}
 }
 
-// TestNewPools_FirstConnectFails tests NewPools when Postgres connection fails.
-func TestNewPools_FirstConnectFails(t *testing.T) {
+// TestNewPools_ConnectFails tests NewPools when TimescaleDB connection fails.
+func TestNewPools_ConnectFails(t *testing.T) {
 	cfg := config.DatabaseConfig{
-		Postgres: config.DBConfig{
-			Host:     "nonexistent-host.invalid",
-			Port:     5432,
-			Name:     "testdb",
-			User:     "testuser",
-			Password: "testpass",
-			SSLMode:  "disable",
-			MinConns: 1,
-			MaxConns: 5,
-		},
 		Timescale: config.DBConfig{
-			Host:     "localhost",
+			Host:     "nonexistent-host.invalid",
 			Port:     5432,
 			Name:     "testts",
 			User:     "testuser",
@@ -162,26 +152,17 @@ func TestNewPools_FirstConnectFails(t *testing.T) {
 
 	_, err := NewPools(ctx, cfg)
 	if err == nil {
-		t.Error("NewPools() should fail when Postgres connection fails")
+		t.Error("NewPools() should fail when TimescaleDB connection fails")
 	}
 }
 
-// TestPools_Close tests the Close method with nil pools.
+// TestPools_Close tests the Close method with nil pool.
 func TestPools_Close(t *testing.T) {
-	t.Run("nil pools", func(t *testing.T) {
+	t.Run("nil pool", func(t *testing.T) {
 		p := &Pools{
-			Postgres:  nil,
 			Timescale: nil,
 		}
 		// Should not panic
-		p.Close()
-	})
-
-	t.Run("only postgres nil", func(t *testing.T) {
-		p := &Pools{
-			Postgres:  nil,
-			Timescale: nil,
-		}
 		p.Close()
 	})
 }

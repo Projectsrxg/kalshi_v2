@@ -11,9 +11,6 @@ func (c *GathererConfig) Validate() error {
 		return errors.New("instance.id is required")
 	}
 
-	if err := c.Database.Postgres.validate("database.postgres"); err != nil {
-		return err
-	}
 	if err := c.Database.Timescale.validate("database.timescale"); err != nil {
 		return err
 	}

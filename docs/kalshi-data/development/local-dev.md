@@ -12,7 +12,6 @@ Local development environment that mirrors production architecture on a single m
 | WebSocket connections | 450 (3 × 150) | 150 |
 | Deduplicator | 1 EC2 instance | Not needed (single source) |
 | TimescaleDB | Per-gatherer + RDS | 1 Docker container |
-| PostgreSQL | Per-gatherer | Same container (separate DB) |
 | S3 | AWS S3 | MinIO or local filesystem |
 | Secrets | AWS Secrets Manager | `.env` file |
 | Kalshi API | Production | Production (same) |
@@ -26,7 +25,7 @@ flowchart TB
 
     subgraph Local["Local Machine"]
         subgraph Docker["Docker Compose"]
-            TS[("TimescaleDB<br/>:5432<br/>kalshi_ts + kalshi_meta")]
+            TS[("TimescaleDB<br/>:5432<br/>kalshi_ts")]
             MINIO[("MinIO<br/>:9000<br/>S3-compatible")]
             PROM[Prometheus<br/>:9090]
             GRAF[Grafana<br/>:3000]
@@ -94,9 +93,8 @@ KALSHI_WS_URL=wss://api.elections.kalshi.com
 KALSHI_API_KEY=your-api-key
 KALSHI_API_SECRET=your-api-secret
 
-# Local databases
+# Local database
 TIMESCALEDB_URL=postgres://postgres:postgres@localhost:5432/kalshi_ts?sslmode=disable
-POSTGRESQL_URL=postgres://postgres:postgres@localhost:5432/kalshi_meta?sslmode=disable
 
 # Local S3 (MinIO)
 S3_ENDPOINT=http://localhost:9000
@@ -226,9 +224,8 @@ volumes:
 
 **migrations/local/init.sql:**
 ```sql
--- Create databases
+-- Create database
 CREATE DATABASE kalshi_ts;
-CREATE DATABASE kalshi_meta;
 
 -- Connect to TimescaleDB database
 \c kalshi_ts
@@ -295,42 +292,9 @@ CREATE TABLE tickers (
 
 SELECT create_hypertable('tickers', 'exchange_ts',
     chunk_time_interval => 3600000000);
-
--- Connect to PostgreSQL database
-\c kalshi_meta
-
-CREATE TABLE markets (
-    ticker              VARCHAR(128) PRIMARY KEY,
-    event_ticker        VARCHAR(128) NOT NULL,
-    series_ticker       VARCHAR(128),
-    market_type         VARCHAR(32) NOT NULL,
-    title               TEXT NOT NULL,
-    subtitle            TEXT,
-    status              VARCHAR(32) NOT NULL,
-    result              VARCHAR(8),
-    open_time           TIMESTAMPTZ,
-    close_time          TIMESTAMPTZ,
-    created_at          TIMESTAMPTZ DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE events (
-    event_ticker    VARCHAR(128) PRIMARY KEY,
-    series_ticker   VARCHAR(128),
-    title           TEXT NOT NULL,
-    category        VARCHAR(64),
-    created_at      TIMESTAMPTZ DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE series (
-    ticker          VARCHAR(128) PRIMARY KEY,
-    title           TEXT,
-    category        VARCHAR(64),
-    created_at      TIMESTAMPTZ DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ DEFAULT NOW()
-);
 ```
+
+**Note:** Market metadata (series, events, markets) is stored in-memory by the Market Registry. In local development, you can inspect the registry via the `/debug/markets` endpoint.
 
 ---
 
@@ -360,14 +324,10 @@ websocket:
   reconnect_backoff: 1s
   max_reconnect_backoff: 30s
 
-# Local databases (same container, different DBs)
+# Local database
 timescaledb:
   url: ${TIMESCALEDB_URL}
   max_connections: 5         # 20 in prod
-
-postgresql:
-  url: ${POSTGRESQL_URL}
-  max_connections: 5         # 10 in prod
 
 # Smaller batches for faster feedback
 writers:
@@ -415,7 +375,6 @@ mode: local
 gatherers:
   - id: local-1
     timescaledb: ${TIMESCALEDB_URL}
-    postgresql: ${POSTGRESQL_URL}
 
 # Same DB acts as "production" in local mode
 production:
@@ -505,13 +464,11 @@ SELECT ticker, side, COUNT(*) as levels
 FROM orderbook_deltas
 WHERE exchange_ts > (SELECT extract(epoch from now()) * 1000000 - 300000000)
 GROUP BY ticker, side;
-
-# Active markets
-\c kalshi_meta
-SELECT ticker, title, status FROM markets WHERE status = 'open' LIMIT 20;
 ```
 
 **Note:** For ad-hoc queries, you can calculate timestamps inline. Production code should always compute timestamps in Go and pass as parameters.
+
+**Market metadata:** The Market Registry stores market state in memory. Use the `/debug/markets` HTTP endpoint to inspect active markets.
 
 ### MinIO (Local S3)
 

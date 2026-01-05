@@ -12,7 +12,6 @@ The platform uses a two-tier storage architecture:
 flowchart TD
     subgraph Gatherer["Gatherer (x3)"]
         TS[(TimescaleDB\nTime-series)]
-        PG[(PostgreSQL\nRelational)]
     end
 
     subgraph Production
@@ -20,8 +19,8 @@ flowchart TD
         S3[(S3\nCold Storage)]
     end
 
+    KALSHI[Kalshi API] --> DEDUP
     TS --> DEDUP[Deduplicator]
-    PG --> DEDUP
     DEDUP --> RDS
     RDS --> EXPORT[Export Job]
     EXPORT --> S3
@@ -29,7 +28,7 @@ flowchart TD
 
 | Tier | Purpose | Technology | Retention |
 |------|---------|------------|-----------|
-| Gatherer-local | Buffer, redundancy | TimescaleDB + PostgreSQL | 7-30 days |
+| Gatherer-local | Buffer, redundancy | TimescaleDB | 7-30 days |
 | Production | Authoritative source | TimescaleDB on RDS | Varies by table |
 | Cold storage | Archive, analytics | Parquet on S3 | Forever |
 
@@ -39,12 +38,13 @@ flowchart TD
 
 ### Gatherer-Local Storage
 
-Each gatherer has two databases:
+Each gatherer has one database:
 
 | Database | Purpose | Tables |
 |----------|---------|--------|
 | TimescaleDB | Time-series data | trades, orderbook_deltas, orderbook_snapshots, tickers |
-| PostgreSQL | Relational data | series, events, markets |
+
+Market metadata (series, events, markets) is kept in-memory by the Market Registry and synced to production RDS by the Deduplicator directly from the Kalshi API.
 
 **Characteristics:**
 - Append-only writes (no updates to time-series)
@@ -132,23 +132,24 @@ flowchart LR
 | Trade Writer | 2-3 | Batch inserts |
 | Ticker Writer | 2-3 | Batch inserts |
 | Snapshot Writer | 1-2 | REST snapshot inserts |
-| Market Registry | 2-3 | Market/event updates |
 
-**Total per gatherer:** 9-14 connections
+**Total per gatherer:** 7-11 connections
+
+Note: Market Registry uses in-memory storage only (no database connections).
 
 ### Deduplicator Connections
 
 | Target | Connections | Mode |
 |--------|-------------|------|
 | Gatherer 1 TimescaleDB | 2 | Read-only |
-| Gatherer 1 PostgreSQL | 2 | Read-only |
 | Gatherer 2 TimescaleDB | 2 | Read-only |
-| Gatherer 2 PostgreSQL | 2 | Read-only |
 | Gatherer 3 TimescaleDB | 2 | Read-only |
-| Gatherer 3 PostgreSQL | 2 | Read-only |
+| Kalshi REST API | 1 | Read-only |
 | Production RDS | 4-6 | Read-write |
 
-**Total:** 16-18 connections
+**Total:** 11-13 connections
+
+Note: Market metadata (series, events, markets) is synced directly from Kalshi API to Production RDS, not from gatherers.
 
 ---
 

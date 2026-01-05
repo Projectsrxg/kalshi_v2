@@ -16,7 +16,7 @@ flowchart TB
     subgraph AWS["AWS us-east-1"]
         subgraph AZ1["us-east-1a"]
             subgraph G1["Gatherer 1 (EC2 t4g.2xlarge)"]
-                G1_MR[Market Registry]
+                G1_MR[Market Registry<br/>In-Memory]
                 G1_CM[Connection Manager<br/>150 WebSockets]
                 G1_RT[Message Router]
                 G1_SP[Snapshot Poller]
@@ -26,12 +26,11 @@ flowchart TB
                 G1_SW[Snapshot Writer]
             end
             G1_TS[("TimescaleDB<br/>:5432<br/>kalshi_ts")]
-            G1_PG[("PostgreSQL<br/>:5433<br/>kalshi_meta")]
         end
 
         subgraph AZ2["us-east-1b"]
             subgraph G2["Gatherer 2 (EC2 t4g.2xlarge)"]
-                G2_MR[Market Registry]
+                G2_MR[Market Registry<br/>In-Memory]
                 G2_CM[Connection Manager<br/>150 WebSockets]
                 G2_RT[Message Router]
                 G2_SP[Snapshot Poller]
@@ -41,12 +40,11 @@ flowchart TB
                 G2_SW[Snapshot Writer]
             end
             G2_TS[("TimescaleDB<br/>:5432<br/>kalshi_ts")]
-            G2_PG[("PostgreSQL<br/>:5433<br/>kalshi_meta")]
         end
 
         subgraph AZ3["us-east-1c"]
             subgraph G3["Gatherer 3 (EC2 t4g.2xlarge)"]
-                G3_MR[Market Registry]
+                G3_MR[Market Registry<br/>In-Memory]
                 G3_CM[Connection Manager<br/>150 WebSockets]
                 G3_RT[Message Router]
                 G3_SP[Snapshot Poller]
@@ -56,10 +54,10 @@ flowchart TB
                 G3_SW[Snapshot Writer]
             end
             G3_TS[("TimescaleDB<br/>:5432<br/>kalshi_ts")]
-            G3_PG[("PostgreSQL<br/>:5433<br/>kalshi_meta")]
 
             subgraph DEDUP["Deduplicator (EC2 t4g.xlarge)"]
-                D_SYNC[Sync Loops<br/>6 tables]
+                D_SYNC[Sync Loops<br/>4 time-series tables]
+                D_API[API Sync<br/>markets/events]
                 D_DEDUP[Deduplication<br/>Engine]
                 D_EXPORT[S3 Exporter]
             end
@@ -80,6 +78,7 @@ flowchart TB
     %% Kalshi API connections
     KALSHI_REST -->|"GET /markets<br/>GET /orderbook"| G1_MR & G2_MR & G3_MR
     KALSHI_REST -->|"GET /orderbook<br/>every 15min"| G1_SP & G2_SP & G3_SP
+    KALSHI_REST -->|"GET /markets<br/>GET /events"| D_API
     KALSHI_WS -->|"ticker, trade,<br/>orderbook_delta,<br/>market_lifecycle"| G1_CM & G2_CM & G3_CM
 
     %% Gatherer 1 internal flow
@@ -89,7 +88,6 @@ flowchart TB
     G1_RT -->|deltas| G1_OW
     G1_RT -->|tickers| G1_KW
     G1_SP -->|snapshots| G1_SW
-    G1_MR -->|markets, events| G1_PG
     G1_TW & G1_OW & G1_KW & G1_SW -->|batch insert| G1_TS
 
     %% Gatherer 2 internal flow
@@ -99,7 +97,6 @@ flowchart TB
     G2_RT -->|deltas| G2_OW
     G2_RT -->|tickers| G2_KW
     G2_SP -->|snapshots| G2_SW
-    G2_MR -->|markets, events| G2_PG
     G2_TW & G2_OW & G2_KW & G2_SW -->|batch insert| G2_TS
 
     %% Gatherer 3 internal flow
@@ -109,13 +106,12 @@ flowchart TB
     G3_RT -->|deltas| G3_OW
     G3_RT -->|tickers| G3_KW
     G3_SP -->|snapshots| G3_SW
-    G3_MR -->|markets, events| G3_PG
     G3_TW & G3_OW & G3_KW & G3_SW -->|batch insert| G3_TS
 
     %% Deduplicator connections
     G1_TS & G2_TS & G3_TS -->|"SQL poll<br/>100ms"| D_SYNC
-    G1_PG & G2_PG & G3_PG -->|"SQL poll<br/>5-30s"| D_SYNC
     D_SYNC --> D_DEDUP
+    D_API --> D_DEDUP
     D_DEDUP -->|"INSERT<br/>ON CONFLICT DO NOTHING"| RDS
     RDS -->|"SELECT<br/>hourly/daily"| D_EXPORT
     D_EXPORT -->|"Parquet"| S3
@@ -169,9 +165,8 @@ flowchart LR
         end
     end
 
-    subgraph LocalDB["Local Databases"]
+    subgraph LocalDB["Local Database"]
         TS[("TimescaleDB :5432<br/>trades<br/>orderbook_deltas<br/>orderbook_snapshots<br/>tickers")]
-        PG[("PostgreSQL :5433<br/>markets<br/>events<br/>series")]
     end
 
     MR --> MR_CACHE
@@ -181,7 +176,6 @@ flowchart LR
     RT --> PARSE --> VALID
     VALID --> TW & OW & KW
     SP --> SW
-    MR --> PG
     TW & OW & KW & SW --> TS
 ```
 
@@ -193,11 +187,9 @@ flowchart LR
 flowchart TB
     subgraph Sources["Data Sources (Read)"]
         G1_TS[("Gatherer 1<br/>TimescaleDB")]
-        G1_PG[("Gatherer 1<br/>PostgreSQL")]
         G2_TS[("Gatherer 2<br/>TimescaleDB")]
-        G2_PG[("Gatherer 2<br/>PostgreSQL")]
         G3_TS[("Gatherer 3<br/>TimescaleDB")]
-        G3_PG[("Gatherer 3<br/>PostgreSQL")]
+        KALSHI[("Kalshi REST API")]
     end
 
     subgraph Deduplicator["Deduplicator Process"]
@@ -206,8 +198,11 @@ flowchart TB
             DELTAS[Deltas Sync<br/>poll: 100ms]
             TICKERS[Tickers Sync<br/>poll: 100ms]
             SNAPS[Snapshots Sync<br/>poll: 1s]
-            MARKETS[Markets Sync<br/>poll: 5s]
-            EVENTS[Events Sync<br/>poll: 30s]
+        end
+
+        subgraph APISync["API Sync"]
+            MARKETS[Markets Sync<br/>poll: 5m]
+            EVENTS[Events Sync<br/>poll: 5m]
         end
 
         subgraph Dedup["Deduplication"]
@@ -229,13 +224,13 @@ flowchart TB
     end
 
     G1_TS & G2_TS & G3_TS --> TRADES & DELTAS & TICKERS & SNAPS
-    G1_PG & G2_PG & G3_PG --> MARKETS & EVENTS
+    KALSHI --> MARKETS & EVENTS
 
     TRADES & DELTAS & TICKERS & SNAPS & MARKETS & EVENTS --> MERGE
     MERGE --> UNIQUE
     UNIQUE --> RDS
 
-    CURSORS <--> TRADES & DELTAS & TICKERS & SNAPS & MARKETS & EVENTS
+    CURSORS <--> TRADES & DELTAS & TICKERS & SNAPS
 
     RDS --> EXPORTER
     EXPORTER --> PARQUET --> S3
@@ -361,7 +356,7 @@ flowchart TB
     NAT2 --> G2
     NAT3 --> G3
 
-    G1 & G2 & G3 -->|5432, 5433| DEDUP
+    G1 & G2 & G3 -->|5432| DEDUP
     DEDUP -->|5432| RDS
     DEDUP --> S3
 ```
@@ -516,10 +511,10 @@ flowchart LR
 
 | Layer | Components | Purpose |
 |-------|------------|---------|
-| **Collection** | 3 Gatherers | Redundant data capture from Kalshi |
-| **Storage (Hot)** | 6 Local DBs + 1 RDS | Low-latency reads, 7-90 day retention |
+| **Collection** | 3 Gatherers | Redundant time-series capture from Kalshi |
+| **Storage (Hot)** | 3 Local TimescaleDBs + 1 RDS | Low-latency reads, 7-90 day retention |
 | **Storage (Cold)** | S3 Parquet | Historical archive, analytics |
-| **Processing** | 1 Deduplicator | Merge, dedupe, export |
+| **Processing** | 1 Deduplicator | Merge, dedupe, API sync, export |
 | **Monitoring** | Prometheus + Grafana | Metrics, alerts, dashboards |
 
 **Data guarantees:**

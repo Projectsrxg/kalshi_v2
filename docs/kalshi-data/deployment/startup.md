@@ -46,16 +46,14 @@ flowchart TD
 sequenceDiagram
     participant G as Gatherer
     participant TS as Local TimescaleDB
-    participant PG as Local PostgreSQL
     participant K as Kalshi API
 
     G->>TS: Connect to TimescaleDB
-    G->>PG: Connect to PostgreSQL
     G->>K: GET /exchange/status
     K-->>G: {exchange_active: true}
     G->>K: GET /markets (paginated)
     K-->>G: [all markets]
-    G->>PG: INSERT markets
+    G->>G: Store markets in memory (Market Registry)
     G->>K: Connect WebSocket
     G->>K: Subscribe ticker, trade, lifecycle
     G->>K: Subscribe orderbook_delta (all markets)
@@ -74,13 +72,12 @@ set -e
 # Install dependencies
 dnf install -y postgresql16-server timescaledb
 
-# Initialize databases
+# Initialize database
 postgresql-setup --initdb
 systemctl start postgresql
 
-# Create databases
+# Create TimescaleDB database
 sudo -u postgres psql -c "CREATE DATABASE kalshi_ts;"
-sudo -u postgres psql -c "CREATE DATABASE kalshi_meta;"
 sudo -u postgres psql -d kalshi_ts -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
 
 # Run migrations
@@ -104,7 +101,6 @@ curl http://localhost:8080/health
   "status": "healthy",
   "components": {
     "timescaledb": "connected",
-    "postgresql": "connected",
     "websocket": {
       "connections": 150,
       "healthy": 148
@@ -129,7 +125,6 @@ curl http://localhost:8080/health
 | Component | Healthy | Degraded | Unhealthy |
 |-----------|---------|----------|-----------|
 | **TimescaleDB** | Connected, ping < 100ms | Ping 100-500ms | Disconnected |
-| **PostgreSQL** | Connected, ping < 100ms | Ping 100-500ms | Disconnected |
 | **WebSocket** | ≥140 of 150 connections | 100-139 connections | <100 connections |
 | **Market Registry** | >0 markets loaded | - | 0 markets |
 
@@ -141,8 +136,8 @@ curl http://localhost:8080/health
 func (g *Gatherer) determineHealth() Health {
     h := Health{Status: "healthy", Components: make(map[string]interface{})}
 
-    // Database checks
-    if !g.timescaleDB.IsConnected() || !g.postgresql.IsConnected() {
+    // Database check
+    if !g.timescaleDB.IsConnected() {
         h.Status = "unhealthy"
     }
 
@@ -156,7 +151,7 @@ func (g *Gatherer) determineHealth() Health {
         }
     }
 
-    // Market Registry check
+    // Market Registry check (in-memory)
     if g.registry.MarketCount() == 0 {
         h.Status = "unhealthy"
     }
@@ -181,6 +176,7 @@ func (g *Gatherer) determineHealth() Health {
 ```mermaid
 sequenceDiagram
     participant D as Deduplicator
+    participant K as Kalshi API
     participant G1 as Gatherer 1
     participant G2 as Gatherer 2
     participant G3 as Gatherer 3
@@ -189,13 +185,12 @@ sequenceDiagram
     D->>P: Connect to Production RDS
     D->>P: Load sync cursors
     D->>G1: Connect to TimescaleDB
-    D->>G1: Connect to PostgreSQL
     D->>G2: Connect to TimescaleDB
-    D->>G2: Connect to PostgreSQL
     D->>G3: Connect to TimescaleDB
-    D->>G3: Connect to PostgreSQL
+    D->>K: Test API connection
     D->>D: Wait for at least 1 gatherer healthy
-    D->>D: Start sync loops
+    D->>D: Start sync loops (time-series from gatherers)
+    D->>D: Start market sync (from Kalshi API)
     D->>D: Healthy
 ```
 
@@ -397,15 +392,6 @@ MemoryMax=14G
 WantedBy=multi-user.target
 ```
 
-### PostgreSQL Service (Gatherer)
-
-```ini
-# /etc/systemd/system/postgresql.service.d/override.conf
-[Service]
-# Increase shared memory for TimescaleDB
-LimitMEMLOCK=infinity
-```
-
 ---
 
 ## Database Users and Roles
@@ -415,11 +401,11 @@ LimitMEMLOCK=infinity
 | User | Database | Host | Permissions | Used By |
 |------|----------|------|-------------|---------|
 | `gatherer` | kalshi_ts (TimescaleDB) | Gatherer | Read/Write | Gatherer |
-| `gatherer` | kalshi_meta (PostgreSQL) | Gatherer | Read/Write | Gatherer |
 | `dedup_reader` | kalshi_ts (TimescaleDB) | Gatherer | Read-only | Deduplicator |
-| `dedup_reader` | kalshi_meta (PostgreSQL) | Gatherer | Read-only | Deduplicator |
 | `deduplicator` | kalshi_prod (RDS) | RDS | Read/Write | Deduplicator |
 | `exporter` | kalshi_prod (RDS) | RDS | Read-only | S3 Exporter |
+
+Note: Market metadata (series, events, markets) is synced directly from Kalshi API to Production RDS by the Deduplicator.
 
 ### Gatherer Database Users
 
@@ -436,23 +422,11 @@ GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO gatherer;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO gatherer;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO gatherer;
 
--- PostgreSQL permissions
-GRANT CONNECT ON DATABASE kalshi_meta TO gatherer;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO gatherer;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO gatherer;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO gatherer;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO gatherer;
-
 -- Create dedup_reader user (read-only for deduplicator)
 CREATE USER dedup_reader WITH PASSWORD 'secure_password_here';
 
 -- TimescaleDB read-only permissions
 GRANT CONNECT ON DATABASE kalshi_ts TO dedup_reader;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO dedup_reader;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO dedup_reader;
-
--- PostgreSQL read-only permissions
-GRANT CONNECT ON DATABASE kalshi_meta TO dedup_reader;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO dedup_reader;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO dedup_reader;
 ```
@@ -484,11 +458,9 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO exporter;
 
 # Local connections (gatherer binary)
 local   kalshi_ts       gatherer                                scram-sha-256
-local   kalshi_meta     gatherer                                scram-sha-256
 
 # Remote connections (deduplicator)
 hostssl kalshi_ts       dedup_reader    10.0.0.0/8              scram-sha-256
-hostssl kalshi_meta     dedup_reader    10.0.0.0/8              scram-sha-256
 
 # Reject all other connections
 host    all             all             0.0.0.0/0               reject
@@ -672,47 +644,6 @@ SELECT create_hypertable('tickers', 'exchange_ts',
 CREATE INDEX idx_tickers_ticker_time ON tickers (ticker, exchange_ts DESC);
 ```
 
-### PostgreSQL (Gatherer)
-
-```sql
--- migrations/001_postgresql.sql
-
--- Markets table
-CREATE TABLE markets (
-    ticker              VARCHAR(128) PRIMARY KEY,
-    event_ticker        VARCHAR(128) NOT NULL,
-    series_ticker       VARCHAR(128),
-    market_type         VARCHAR(32) NOT NULL,
-    title               TEXT NOT NULL,
-    subtitle            TEXT,
-    yes_sub_title       TEXT,
-    no_sub_title        TEXT,
-    open_time           TIMESTAMPTZ,
-    close_time          TIMESTAMPTZ,
-    expiration_time     TIMESTAMPTZ,
-    settlement_time     TIMESTAMPTZ,
-    status              VARCHAR(32) NOT NULL,
-    result              VARCHAR(8),
-    created_at          TIMESTAMPTZ DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX idx_markets_event ON markets (event_ticker);
-CREATE INDEX idx_markets_status ON markets (status);
-
--- Events table
-CREATE TABLE events (
-    event_ticker    VARCHAR(128) PRIMARY KEY,
-    series_ticker   VARCHAR(128),
-    title           TEXT NOT NULL,
-    category        VARCHAR(64),
-    sub_title       TEXT,
-    mutually_exclusive BOOLEAN DEFAULT FALSE,
-    created_at      TIMESTAMPTZ DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ DEFAULT NOW()
-);
-```
-
 ---
 
 ## Graceful Shutdown
@@ -732,9 +663,8 @@ func (g *Gatherer) Shutdown(ctx context.Context) error {
     // 3. Close WebSocket connections
     g.connManager.Close()
 
-    // 4. Close database connections
+    // 4. Close database connection
     g.timescaleDB.Close()
-    g.postgresql.Close()
 
     g.logger.Info("gatherer shutdown complete")
     return nil
@@ -793,7 +723,7 @@ systemctl stop gatherer
 
 - [ ] EC2 instance launched in correct AZ
 - [ ] EBS volume attached
-- [ ] Local PostgreSQL and TimescaleDB initialized
+- [ ] Local TimescaleDB initialized
 - [ ] Database migrations applied
 - [ ] Configuration file deployed
 - [ ] Systemd service enabled and started

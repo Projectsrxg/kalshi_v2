@@ -109,36 +109,28 @@ flowchart TD
     subgraph AZ1["AZ-a"]
         G1[Gatherer 1]
         TS1[(TimescaleDB)]
-        PG1[(PostgreSQL)]
         G1 --> TS1
-        G1 --> PG1
     end
     subgraph AZ2["AZ-b"]
         G2[Gatherer 2]
         TS2[(TimescaleDB)]
-        PG2[(PostgreSQL)]
         G2 --> TS2
-        G2 --> PG2
     end
     subgraph AZ3["AZ-c"]
         G3[Gatherer 3]
         TS3[(TimescaleDB)]
-        PG3[(PostgreSQL)]
         G3 --> TS3
-        G3 --> PG3
     end
 
-    TS1 --> DEDUP[Deduplicator]
+    KALSHI[Kalshi API] --> DEDUP[Deduplicator]
+    TS1 --> DEDUP
     TS2 --> DEDUP
     TS3 --> DEDUP
-    PG1 --> DEDUP
-    PG2 --> DEDUP
-    PG3 --> DEDUP
     DEDUP --> PROD[(Production RDS)]
     DEDUP --> S3[(S3 Cold Storage)]
 ```
 
-Each gatherer contains: Market Registry, Connection Manager, WebSocket Pool, Message Router, Writers.
+Each gatherer contains: Market Registry (in-memory), Connection Manager, WebSocket Pool, Message Router, Writers.
 
 ---
 
@@ -171,10 +163,10 @@ Each gatherer contains: Market Registry, Connection Manager, WebSocket Pool, Mes
 
 Per gatherer:
 - **TimescaleDB**: trades, orderbook_deltas, orderbook_snapshots, tickers (time-series hypertables)
-- **PostgreSQL**: series, events, markets (relational data)
+- **In-memory**: Market Registry (no persistence needed)
 
 Production:
-- **RDS TimescaleDB**: Deduplicated data from all gatherers
+- **RDS TimescaleDB**: Deduplicated time-series data from all gatherers + market metadata from Kalshi API
 - **S3**: Cold storage (Parquet exports)
 
 ---
@@ -209,8 +201,8 @@ Production:
 | Layer | Technology | Purpose |
 |-------|------------|---------|
 | Local (per gatherer) | TimescaleDB | Time-series data (hypertables with compression) |
-| Local (per gatherer) | PostgreSQL | Relational data (markets, events, series) |
-| Production | RDS TimescaleDB | Deduplicated data store |
+| Local (per gatherer) | In-memory | Market Registry (no persistence) |
+| Production | RDS TimescaleDB | Deduplicated time-series + market metadata |
 | Cold storage | S3 + Parquet | Historical exports, Glacier lifecycle |
 
 ---
@@ -222,8 +214,8 @@ Production:
 - EC2 launch templates
 
 ### Phase 2: Single Gatherer
-- 1 EC2 instance with local TimescaleDB + PostgreSQL
-- Market Registry, Connection Manager, Writers
+- 1 EC2 instance with local TimescaleDB
+- Market Registry (in-memory), Connection Manager, Writers
 - WebSocket data collection
 
 ### Phase 3: Deduplicator

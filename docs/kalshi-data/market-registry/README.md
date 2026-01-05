@@ -12,7 +12,7 @@ Discovers and tracks all Kalshi markets. Entry point for the gatherer's data col
 | Initial sync | Fetch all markets/events via REST on startup |
 | Live updates | Subscribe to `market_lifecycle` WebSocket channel |
 | Reconciliation | Periodic REST poll as backup |
-| Metadata storage | Write to local `markets`, `events`, `series` tables |
+| In-memory cache | Store market state in memory (no database persistence) |
 | Subscription control | Tell Connection Manager which markets to subscribe |
 
 ---
@@ -57,7 +57,6 @@ flowchart TD
 ```mermaid
 flowchart LR
     MR[Market Registry] --> REST[REST Client]
-    MR --> DB[(PostgreSQL)]
     MR -->|MarketChange events| CM[Connection Manager]
     CM -->|market_lifecycle| MR
 ```
@@ -65,8 +64,9 @@ flowchart LR
 | Dependency | Purpose |
 |------------|---------|
 | REST Client | Fetch markets, events, series, exchange status |
-| PostgreSQL | Persist market/event/series metadata |
 | Connection Manager | Receives MarketChange events; provides `market_lifecycle` messages |
+
+**Note:** Market Registry stores all state in memory. Market metadata is persisted to production RDS by the Deduplicator, which syncs directly from the Kalshi API.
 
 **Note:** Connection Manager owns all WebSocket connections, including the `market_lifecycle` subscription. It routes lifecycle messages to Market Registry via a dedicated channel.
 
@@ -89,8 +89,8 @@ flowchart LR
 | Channel | Events | Action |
 |---------|--------|--------|
 | `market_lifecycle` | `created` | Fetch full market via REST, notify CM to subscribe |
-| `market_lifecycle` | `status_change` | Update cache + DB, notify CM if status changed |
-| `market_lifecycle` | `settled` | Update cache + DB, notify CM to unsubscribe |
+| `market_lifecycle` | `status_change` | Update in-memory cache, notify CM if status changed |
+| `market_lifecycle` | `settled` | Update in-memory cache, notify CM to unsubscribe |
 
 ---
 

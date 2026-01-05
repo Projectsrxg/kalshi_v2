@@ -17,12 +17,6 @@ instance:
 api:
   rest_url: https://demo-api.kalshi.co/trade-api/v2
 database:
-  postgres:
-    host: localhost
-    port: 5432
-    name: test_db
-    user: testuser
-    password: testpass
   timescale:
     host: localhost
     port: 5432
@@ -46,8 +40,8 @@ database:
 		if cfg.API.RestURL != "https://demo-api.kalshi.co/trade-api/v2" {
 			t.Errorf("API.RestURL = %q, want %q", cfg.API.RestURL, "https://demo-api.kalshi.co/trade-api/v2")
 		}
-		if cfg.Database.Postgres.Host != "localhost" {
-			t.Errorf("Database.Postgres.Host = %q, want %q", cfg.Database.Postgres.Host, "localhost")
+		if cfg.Database.Timescale.Host != "localhost" {
+			t.Errorf("Database.Timescale.Host = %q, want %q", cfg.Database.Timescale.Host, "localhost")
 		}
 	})
 
@@ -100,11 +94,6 @@ func TestLoadWithEnvSubstitution(t *testing.T) {
 instance:
   id: test-gatherer
 database:
-  postgres:
-    host: localhost
-    name: test_db
-    user: testuser
-    password: ${TEST_DB_PASSWORD}
   timescale:
     host: localhost
     name: test_ts
@@ -118,8 +107,8 @@ database:
 			t.Fatalf("Load failed: %v", err)
 		}
 
-		if cfg.Database.Postgres.Password != "secret123" {
-			t.Errorf("Database.Postgres.Password = %q, want %q", cfg.Database.Postgres.Password, "secret123")
+		if cfg.Database.Timescale.Password != "secret123" {
+			t.Errorf("Database.Timescale.Password = %q, want %q", cfg.Database.Timescale.Password, "secret123")
 		}
 	})
 
@@ -132,7 +121,7 @@ database:
 instance:
   id: test
 database:
-  postgres:
+  timescale:
     host: ${TEST_HOST}
     name: db
     user: ${TEST_USER}
@@ -145,14 +134,14 @@ database:
 			t.Fatalf("Load failed: %v", err)
 		}
 
-		if cfg.Database.Postgres.Host != "db.example.com" {
-			t.Errorf("Host = %q, want %q", cfg.Database.Postgres.Host, "db.example.com")
+		if cfg.Database.Timescale.Host != "db.example.com" {
+			t.Errorf("Host = %q, want %q", cfg.Database.Timescale.Host, "db.example.com")
 		}
-		if cfg.Database.Postgres.User != "admin" {
-			t.Errorf("User = %q, want %q", cfg.Database.Postgres.User, "admin")
+		if cfg.Database.Timescale.User != "admin" {
+			t.Errorf("User = %q, want %q", cfg.Database.Timescale.User, "admin")
 		}
-		if cfg.Database.Postgres.Password != "securepass" {
-			t.Errorf("Password = %q, want %q", cfg.Database.Postgres.Password, "securepass")
+		if cfg.Database.Timescale.Password != "securepass" {
+			t.Errorf("Password = %q, want %q", cfg.Database.Timescale.Password, "securepass")
 		}
 	})
 
@@ -182,11 +171,6 @@ func TestLoadWithDefaults(t *testing.T) {
 instance:
   id: test-gatherer
 database:
-  postgres:
-    host: localhost
-    name: test_db
-    user: testuser
-    password: testpass
   timescale:
     host: localhost
     name: test_ts
@@ -215,20 +199,17 @@ database:
 	}
 
 	// Check database defaults
-	if cfg.Database.Postgres.Port != DefaultDBPort {
-		t.Errorf("Database.Postgres.Port = %d, want default %d", cfg.Database.Postgres.Port, DefaultDBPort)
-	}
-	if cfg.Database.Postgres.SSLMode != DefaultDBSSLMode {
-		t.Errorf("Database.Postgres.SSLMode = %q, want default %q", cfg.Database.Postgres.SSLMode, DefaultDBSSLMode)
-	}
-	if cfg.Database.Postgres.MaxConns != DefaultMaxConns {
-		t.Errorf("Database.Postgres.MaxConns = %d, want default %d", cfg.Database.Postgres.MaxConns, DefaultMaxConns)
-	}
-	if cfg.Database.Postgres.MinConns != DefaultMinConns {
-		t.Errorf("Database.Postgres.MinConns = %d, want default %d", cfg.Database.Postgres.MinConns, DefaultMinConns)
-	}
 	if cfg.Database.Timescale.Port != DefaultDBPort {
 		t.Errorf("Database.Timescale.Port = %d, want default %d", cfg.Database.Timescale.Port, DefaultDBPort)
+	}
+	if cfg.Database.Timescale.SSLMode != DefaultDBSSLMode {
+		t.Errorf("Database.Timescale.SSLMode = %q, want default %q", cfg.Database.Timescale.SSLMode, DefaultDBSSLMode)
+	}
+	if cfg.Database.Timescale.MaxConns != DefaultMaxConns {
+		t.Errorf("Database.Timescale.MaxConns = %d, want default %d", cfg.Database.Timescale.MaxConns, DefaultMaxConns)
+	}
+	if cfg.Database.Timescale.MinConns != DefaultMinConns {
+		t.Errorf("Database.Timescale.MinConns = %d, want default %d", cfg.Database.Timescale.MinConns, DefaultMinConns)
 	}
 
 	// Check connections defaults
@@ -291,20 +272,15 @@ api:
   timeout: 60s
   max_retries: 5
 database:
-  postgres:
+  timescale:
     host: customhost
     port: 5433
-    name: test_db
+    name: test_ts
     user: testuser
     password: testpass
     ssl_mode: require
     max_conns: 20
     min_conns: 5
-  timescale:
-    host: localhost
-    name: test_ts
-    user: testuser
-    password: testpass
 connections:
   orderbook_count: 100
 writers:
@@ -333,11 +309,11 @@ metrics:
 	if cfg.API.MaxRetries != 5 {
 		t.Errorf("API.MaxRetries = %d, want 5", cfg.API.MaxRetries)
 	}
-	if cfg.Database.Postgres.Port != 5433 {
-		t.Errorf("Database.Postgres.Port = %d, want 5433", cfg.Database.Postgres.Port)
+	if cfg.Database.Timescale.Port != 5433 {
+		t.Errorf("Database.Timescale.Port = %d, want 5433", cfg.Database.Timescale.Port)
 	}
-	if cfg.Database.Postgres.SSLMode != "require" {
-		t.Errorf("Database.Postgres.SSLMode = %q, want 'require'", cfg.Database.Postgres.SSLMode)
+	if cfg.Database.Timescale.SSLMode != "require" {
+		t.Errorf("Database.Timescale.SSLMode = %q, want 'require'", cfg.Database.Timescale.SSLMode)
 	}
 	if cfg.Connections.OrderbookCount != 100 {
 		t.Errorf("Connections.OrderbookCount = %d, want 100", cfg.Connections.OrderbookCount)
@@ -359,11 +335,6 @@ func TestLoadAndValidate(t *testing.T) {
 instance:
   id: test-gatherer
 database:
-  postgres:
-    host: localhost
-    name: test_db
-    user: testuser
-    password: testpass
   timescale:
     host: localhost
     name: test_ts
@@ -418,90 +389,77 @@ func TestValidate(t *testing.T) {
 			wantErr: "instance.id is required",
 		},
 		{
-			name: "missing postgres host",
-			cfg: GathererConfig{
-				Instance: InstanceConfig{ID: "test"},
-			},
-			wantErr: "database.postgres.host is required",
-		},
-		{
-			name: "missing postgres name",
-			cfg: GathererConfig{
-				Instance: InstanceConfig{ID: "test"},
-				Database: DatabaseConfig{
-					Postgres: DBConfig{Host: "localhost"},
-				},
-			},
-			wantErr: "database.postgres.name is required",
-		},
-		{
-			name: "missing postgres user",
-			cfg: GathererConfig{
-				Instance: InstanceConfig{ID: "test"},
-				Database: DatabaseConfig{
-					Postgres: DBConfig{Host: "localhost", Name: "db"},
-				},
-			},
-			wantErr: "database.postgres.user is required",
-		},
-		{
-			name: "missing postgres password",
-			cfg: GathererConfig{
-				Instance: InstanceConfig{ID: "test"},
-				Database: DatabaseConfig{
-					Postgres: DBConfig{Host: "localhost", Name: "db", User: "user"},
-				},
-			},
-			wantErr: "database.postgres.password is required",
-		},
-		{
-			name: "postgres max_conns < 1",
-			cfg: GathererConfig{
-				Instance: InstanceConfig{ID: "test"},
-				Database: DatabaseConfig{
-					Postgres: DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 0},
-				},
-			},
-			wantErr: "database.postgres.max_conns must be >= 1",
-		},
-		{
-			name: "postgres min_conns < 0",
-			cfg: GathererConfig{
-				Instance: InstanceConfig{ID: "test"},
-				Database: DatabaseConfig{
-					Postgres: DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 5, MinConns: -1},
-				},
-			},
-			wantErr: "database.postgres.min_conns must be >= 0",
-		},
-		{
-			name: "postgres min_conns exceeds max_conns",
-			cfg: GathererConfig{
-				Instance: InstanceConfig{ID: "test"},
-				Database: DatabaseConfig{
-					Postgres:  DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 5, MinConns: 10},
-					Timescale: DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 5},
-				},
-			},
-			wantErr: "database.postgres.min_conns (10) cannot exceed max_conns (5)",
-		},
-		{
 			name: "missing timescale host",
 			cfg: GathererConfig{
 				Instance: InstanceConfig{ID: "test"},
-				Database: DatabaseConfig{
-					Postgres:  DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 5},
-					Timescale: DBConfig{},
-				},
 			},
 			wantErr: "database.timescale.host is required",
+		},
+		{
+			name: "missing timescale name",
+			cfg: GathererConfig{
+				Instance: InstanceConfig{ID: "test"},
+				Database: DatabaseConfig{
+					Timescale: DBConfig{Host: "localhost"},
+				},
+			},
+			wantErr: "database.timescale.name is required",
+		},
+		{
+			name: "missing timescale user",
+			cfg: GathererConfig{
+				Instance: InstanceConfig{ID: "test"},
+				Database: DatabaseConfig{
+					Timescale: DBConfig{Host: "localhost", Name: "db"},
+				},
+			},
+			wantErr: "database.timescale.user is required",
+		},
+		{
+			name: "missing timescale password",
+			cfg: GathererConfig{
+				Instance: InstanceConfig{ID: "test"},
+				Database: DatabaseConfig{
+					Timescale: DBConfig{Host: "localhost", Name: "db", User: "user"},
+				},
+			},
+			wantErr: "database.timescale.password is required",
+		},
+		{
+			name: "timescale max_conns < 1",
+			cfg: GathererConfig{
+				Instance: InstanceConfig{ID: "test"},
+				Database: DatabaseConfig{
+					Timescale: DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 0},
+				},
+			},
+			wantErr: "database.timescale.max_conns must be >= 1",
+		},
+		{
+			name: "timescale min_conns < 0",
+			cfg: GathererConfig{
+				Instance: InstanceConfig{ID: "test"},
+				Database: DatabaseConfig{
+					Timescale: DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 5, MinConns: -1},
+				},
+			},
+			wantErr: "database.timescale.min_conns must be >= 0",
+		},
+		{
+			name: "timescale min_conns exceeds max_conns",
+			cfg: GathererConfig{
+				Instance: InstanceConfig{ID: "test"},
+				Database: DatabaseConfig{
+					Timescale: DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 5, MinConns: 10},
+				},
+			},
+			wantErr: "database.timescale.min_conns (10) cannot exceed max_conns (5)",
 		},
 		{
 			name: "connections orderbook_count < 1",
 			cfg: GathererConfig{
 				Instance: InstanceConfig{ID: "test"},
 				Database: DatabaseConfig{
-					Postgres:  DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 5},
 					Timescale: DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 5},
 				},
 				Connections: ConnectionsConfig{
@@ -515,7 +473,6 @@ func TestValidate(t *testing.T) {
 			cfg: GathererConfig{
 				Instance: InstanceConfig{ID: "test"},
 				Database: DatabaseConfig{
-					Postgres:  DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 5},
 					Timescale: DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 5},
 				},
 				Connections: ConnectionsConfig{
@@ -530,7 +487,6 @@ func TestValidate(t *testing.T) {
 			cfg: GathererConfig{
 				Instance: InstanceConfig{ID: "test"},
 				Database: DatabaseConfig{
-					Postgres:  DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 5},
 					Timescale: DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 5},
 				},
 				Connections: ConnectionsConfig{
@@ -548,7 +504,6 @@ func TestValidate(t *testing.T) {
 			cfg: GathererConfig{
 				Instance: InstanceConfig{ID: "test"},
 				Database: DatabaseConfig{
-					Postgres:  DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 5},
 					Timescale: DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 5},
 				},
 				Connections: ConnectionsConfig{
@@ -567,7 +522,6 @@ func TestValidate(t *testing.T) {
 			cfg: GathererConfig{
 				Instance: InstanceConfig{ID: "test"},
 				Database: DatabaseConfig{
-					Postgres:  DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 5},
 					Timescale: DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 5},
 				},
 				Connections: ConnectionsConfig{
@@ -589,7 +543,6 @@ func TestValidate(t *testing.T) {
 			cfg: GathererConfig{
 				Instance: InstanceConfig{ID: "test"},
 				Database: DatabaseConfig{
-					Postgres:  DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 5},
 					Timescale: DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 5},
 				},
 				Connections: ConnectionsConfig{
@@ -614,7 +567,6 @@ func TestValidate(t *testing.T) {
 			cfg: GathererConfig{
 				Instance: InstanceConfig{ID: "test"},
 				Database: DatabaseConfig{
-					Postgres:  DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 5},
 					Timescale: DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 5},
 				},
 				Connections: ConnectionsConfig{
@@ -639,7 +591,6 @@ func TestValidate(t *testing.T) {
 			cfg: GathererConfig{
 				Instance: InstanceConfig{ID: "test"},
 				Database: DatabaseConfig{
-					Postgres:  DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 10, MinConns: 2},
 					Timescale: DBConfig{Host: "localhost", Name: "db", User: "user", Password: "pass", MaxConns: 10, MinConns: 2},
 				},
 				Connections: ConnectionsConfig{
@@ -665,7 +616,6 @@ func TestValidate(t *testing.T) {
 			cfg: GathererConfig{
 				Instance: InstanceConfig{ID: "t"},
 				Database: DatabaseConfig{
-					Postgres:  DBConfig{Host: "h", Name: "n", User: "u", Password: "p", MaxConns: 1, MinConns: 0},
 					Timescale: DBConfig{Host: "h", Name: "n", User: "u", Password: "p", MaxConns: 1, MinConns: 0},
 				},
 				Connections: ConnectionsConfig{
@@ -690,7 +640,6 @@ func TestValidate(t *testing.T) {
 			cfg: GathererConfig{
 				Instance: InstanceConfig{ID: "test"},
 				Database: DatabaseConfig{
-					Postgres:  DBConfig{Host: "h", Name: "n", User: "u", Password: "p", MaxConns: 1},
 					Timescale: DBConfig{Host: "h", Name: "n", User: "u", Password: "p", MaxConns: 1},
 				},
 				Connections: ConnectionsConfig{

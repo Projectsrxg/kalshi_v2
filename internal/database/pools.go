@@ -9,29 +9,21 @@ import (
 )
 
 // Pools holds database connections for a gatherer.
+// Note: Gatherers only use TimescaleDB for time-series data.
+// Market metadata lives in-memory (Market Registry).
 type Pools struct {
-	// Postgres holds markets, events, series (relational data).
-	Postgres *pgxpool.Pool
-
 	// Timescale holds trades, orderbook deltas, snapshots (time-series data).
 	Timescale *pgxpool.Pool
 }
 
-// NewPools creates connection pools for both databases.
+// NewPools creates connection pool for TimescaleDB.
 func NewPools(ctx context.Context, cfg config.DatabaseConfig) (*Pools, error) {
-	pg, err := Connect(ctx, cfg.Postgres)
-	if err != nil {
-		return nil, fmt.Errorf("connect postgres: %w", err)
-	}
-
 	ts, err := Connect(ctx, cfg.Timescale)
 	if err != nil {
-		pg.Close()
 		return nil, fmt.Errorf("connect timescale: %w", err)
 	}
 
 	return &Pools{
-		Postgres:  pg,
 		Timescale: ts,
 	}, nil
 }
@@ -61,21 +53,15 @@ func Connect(ctx context.Context, cfg config.DBConfig) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// Close closes both connection pools.
+// Close closes the connection pool.
 func (p *Pools) Close() {
-	if p.Postgres != nil {
-		p.Postgres.Close()
-	}
 	if p.Timescale != nil {
 		p.Timescale.Close()
 	}
 }
 
-// Ping verifies both connections are healthy.
+// Ping verifies the connection is healthy.
 func (p *Pools) Ping(ctx context.Context) error {
-	if err := p.Postgres.Ping(ctx); err != nil {
-		return fmt.Errorf("ping postgres: %w", err)
-	}
 	if err := p.Timescale.Ping(ctx); err != nil {
 		return fmt.Errorf("ping timescale: %w", err)
 	}
