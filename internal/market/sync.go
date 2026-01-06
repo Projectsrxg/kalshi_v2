@@ -204,17 +204,21 @@ func (r *registryImpl) lifecycleLoop(ctx context.Context) {
 	}
 }
 
-// lifecycleMessage is the WebSocket message for market_lifecycle channel.
+// lifecycleMessage is the WebSocket message for market_lifecycle_v2 channel.
 type lifecycleMessage struct {
 	Type string `json:"type"`
 	SID  int64  `json:"sid"`
+	Seq  int64  `json:"seq"`
 	Msg  struct {
-		MarketTicker string `json:"market_ticker"`
-		EventType    string `json:"event_type"` // "created", "status_change", "settled"
-		OldStatus    string `json:"old_status"`
-		NewStatus    string `json:"new_status"`
-		Result       string `json:"result"` // "yes", "no", or ""
-		Timestamp    int64  `json:"ts"`     // Unix timestamp (seconds)
+		MarketTicker    string `json:"market_ticker"`
+		EventType       string `json:"event_type"` // "created", "determined", "close_date_updated", "activated", "deactivated", "settled"
+		OldStatus       string `json:"old_status"`
+		NewStatus       string `json:"new_status"`
+		Result          string `json:"result"`           // "yes", "no", "scalar", or ""
+		Timestamp       int64  `json:"ts"`               // Unix timestamp (seconds) - legacy
+		OpenTs          int64  `json:"open_ts"`          // Open timestamp
+		CloseTs         int64  `json:"close_ts"`         // Close timestamp
+		DeterminationTs int64  `json:"determination_ts"` // Determination timestamp
 	} `json:"msg"`
 }
 
@@ -226,8 +230,8 @@ func (r *registryImpl) handleLifecycleMessage(ctx context.Context, msg []byte) {
 		return
 	}
 
-	// Only process market_lifecycle messages
-	if lm.Type != "market_lifecycle" {
+	// Only process market_lifecycle_v2 messages
+	if lm.Type != "market_lifecycle_v2" {
 		return
 	}
 

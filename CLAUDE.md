@@ -27,7 +27,7 @@ flowchart TD
 
 | Component | Description |
 |-----------|-------------|
-| **Market Registry** | Discovers markets via REST API, receives live updates via `market_lifecycle` WebSocket. In-memory only (no persistence). |
+| **Market Registry** | Discovers markets via REST API, receives live updates via `market_lifecycle_v2` WebSocket. In-memory only (no persistence). |
 | **Connection Manager** | Maintains 150 WebSocket connections per gatherer (144 orderbook + 6 global) |
 | **Message Router** | Routes WebSocket messages to appropriate writers with non-blocking buffers |
 | **Snapshot Poller** | Polls REST API every 15 minutes for orderbook snapshots as backup |
@@ -46,10 +46,10 @@ flowchart TD
 ## Kalshi API
 
 - **REST**: `https://api.elections.kalshi.com/trade-api/v2`
-- **WebSocket**: `wss://api.elections.kalshi.com`
+- **WebSocket**: `wss://api.elections.kalshi.com/trade-api/ws/v2`
 - **Demo**: `https://demo-api.kalshi.co/trade-api/v2`
 
-Key WebSocket channels: `orderbook_delta`, `trade`, `ticker`, `market_lifecycle`
+Key WebSocket channels: `orderbook_delta`, `trade`, `ticker`, `market_lifecycle_v2`
 
 Rate limits apply only to order operations (writes), not market data reads.
 

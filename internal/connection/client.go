@@ -114,6 +114,14 @@ func (c *client) Connect(ctx context.Context) error {
 		)
 	})
 
+	// Set up pong handler - server responds to our ping
+	conn.SetPongHandler(func(data string) error {
+		c.mu.Lock()
+		c.lastPingAt = time.Now()
+		c.mu.Unlock()
+		return nil
+	})
+
 	// Start goroutines
 	go c.readLoop()
 	go c.heartbeatLoop()
@@ -233,7 +241,7 @@ func (c *client) readLoop() {
 
 // heartbeatLoop monitors for stale connections.
 func (c *client) heartbeatLoop() {
-	ticker := time.NewTicker(15 * time.Second)
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -241,6 +249,19 @@ func (c *client) heartbeatLoop() {
 		case <-c.done:
 			return
 		case <-ticker.C:
+			// Send a ping to keep connection alive
+			c.mu.RLock()
+			conn := c.conn
+			c.mu.RUnlock()
+
+			if conn != nil {
+				deadline := time.Now().Add(c.cfg.WriteTimeout)
+				if err := conn.WriteControl(websocket.PingMessage, []byte("keepalive"), deadline); err != nil {
+					c.logger.Debug("failed to send ping", "error", err)
+				}
+			}
+
+			// Check for stale connection (no pong/ping response)
 			c.mu.RLock()
 			lastPing := c.lastPingAt
 			c.mu.RUnlock()

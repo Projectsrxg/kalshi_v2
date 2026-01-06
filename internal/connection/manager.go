@@ -221,10 +221,11 @@ func (m *manager) Stats() ManagerStats {
 func (m *manager) initConnections() error {
 	clientCfg := ClientConfig{
 		URL:          m.cfg.WSURL,
-		APIKey:       m.cfg.APIKey,
-		PingTimeout:  30 * time.Second,
+		KeyID:        m.cfg.KeyID,
+		PrivateKey:   m.cfg.PrivateKey,
+		PingTimeout:  5 * time.Minute, // Long timeout to survive initial snapshot flood
 		WriteTimeout: 5 * time.Second,
-		BufferSize:   1000,
+		BufferSize:   100000, // 100K per connection for high-volume initial snapshots
 	}
 
 	// Ticker connections (1-2)
@@ -334,7 +335,7 @@ func (m *manager) subscribeGlobalChannels() error {
 		if c == nil || !c.client.IsConnected() {
 			continue
 		}
-		if err := m.subscribe(c, "market_lifecycle", ""); err != nil {
+		if err := m.subscribe(c, "market_lifecycle_v2", ""); err != nil {
 			m.logger.Warn("failed to subscribe lifecycle", "conn", i+5, "error", err)
 		}
 	}
@@ -860,10 +861,11 @@ func (m *manager) reconnect(conn *connState) {
 		// Create new client
 		cfg := ClientConfig{
 			URL:          m.cfg.WSURL,
-			APIKey:       m.cfg.APIKey,
-			PingTimeout:  30 * time.Second,
+			KeyID:        m.cfg.KeyID,
+			PrivateKey:   m.cfg.PrivateKey,
+			PingTimeout:  5 * time.Minute,
 			WriteTimeout: 5 * time.Second,
-			BufferSize:   1000,
+			BufferSize:   100000,
 		}
 		conn.client = NewClient(cfg, m.logger.With("conn_id", conn.id, "role", conn.role))
 		conn.readLoopDone = make(chan struct{})
@@ -892,7 +894,7 @@ func (m *manager) reconnect(conn *connState) {
 		case RoleTrade:
 			m.subscribe(conn, "trade", "")
 		case RoleLifecycle:
-			m.subscribe(conn, "market_lifecycle", "")
+			m.subscribe(conn, "market_lifecycle_v2", "")
 		case RoleOrderbook:
 			// Re-subscribe to all markets on this connection
 			conn.mu.Lock()
