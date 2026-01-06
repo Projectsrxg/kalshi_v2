@@ -1,0 +1,47 @@
+# Local Development Gatherer Configuration
+
+# Instance identification
+instance:
+  id: gatherer-local
+  az: local
+
+# Kalshi API configuration (production)
+api:
+  rest_url: https://api.elections.kalshi.com/trade-api/v2
+  ws_url: wss://api.elections.kalshi.com/trade-api/ws/v2
+  api_key: ${KALSHI_API_KEY}
+  private_key_path: ${KALSHI_PRIVATE_KEY_PATH}
+
+# Database connection (TimescaleDB via docker-compose)
+database:
+  timescale:
+    host: localhost
+    port: 5433
+    name: kalshi_ts
+    user: postgres
+    password: postgres
+    max_conns: 10
+
+# Connection Manager settings (reduced for local dev)
+connections:
+  orderbook_count: 10
+  markets_per_connection: 250
+  global_count: 2
+  reconnect_base_delay: 1s
+  reconnect_max_delay: 60s
+
+# Writer settings
+writers:
+  batch_size: 500
+  flush_interval: 1s
+  buffer_size: 5000
+
+# Snapshot Poller settings
+poller:
+  interval: 15m
+  concurrency: 5
+
+# Metrics server
+metrics:
+  port: 8080
+  path: /metrics

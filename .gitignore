@@ -1,61 +1,75 @@
-# Binaries
-bin/
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
+# System and user files
+.bash_history
+.bash_logout
+.bashrc
+.profile
+.sudo_as_admin_successful
+.ssh/
+.cache/
+.local/
+.config/
+.java/
+.npm/
 
-# Test binary, built with `go test -c`
-*.test
+# Claude Code
+.claude/
+.claude.json
+.claude.json.backup
 
-# Output of the go coverage tool
-*.out
-coverage.html
-
-# Go workspace file
-go.work
-
-# Dependency directories
-vendor/
-
-# IDE
+# IDE and Editor
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
 
-# OS files
-.DS_Store
-Thumbs.db
+# Go
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+*.test
+*.out
 
-# Local configuration (use .local.yaml suffix)
-configs/*.local.yaml
-*.local.yaml
+# Go build cache
+go.work
 
-# Environment files
-.env
-.env.*
-!.env.example
+# Dependency directories
+vendor/
 
-# Secrets
-*.pem
-*.key
-credentials.json
+# Compiled binaries
+kalshi/gatherer
+kalshi/streamtest
 
-# Terraform
-deploy/terraform/.terraform/
-deploy/terraform/*.tfstate
-deploy/terraform/*.tfstate.*
-deploy/terraform/*.tfvars
-!deploy/terraform/*.tfvars.example
-deploy/terraform/.terraform.lock.hcl
+# Archives and compressed files
+*.zip
+*.tar.gz
+*.rar
 
 # Logs
 *.log
 logs/
 
-# Temporary files
-tmp/
-temp/
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test coverage
+*.coverprofile
+coverage.txt
+coverage.html
+
+# Development tools
+dev_tools.sh
+
+# Other directories not part of kalshi project
+go/
+kurated/

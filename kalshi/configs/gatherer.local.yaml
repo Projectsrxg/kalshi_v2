@@ -1,0 +1,81 @@
+# Gatherer Configuration - Local Development
+# Copy to configs/gatherer.local.yaml and customize
+
+# Instance identification
+instance:
+  id: local-1
+  az: local
+
+# Kalshi API configuration
+api:
+  rest_url: https://api.elections.kalshi.com/trade-api/v2
+  ws_url: wss://api.elections.kalshi.com/trade-api/ws/v2
+
+  # For demo environment (fewer markets):
+  # rest_url: https://demo-api.kalshi.co/trade-api/v2
+  # ws_url: wss://demo-api.kalshi.co/trade-api/ws/v2
+
+  # Authentication (REQUIRED for WebSocket connections)
+  # Get your API key and private key from the Kalshi dashboard:
+  # https://kalshi.com/settings/api-keys
+  api_key: ${KALSHI_API_KEY}
+  private_key_path: ${KALSHI_PRIVATE_KEY_PATH}  # Path to RSA private key PEM file
+
+# Database connection (TimescaleDB)
+database:
+  timescale:
+    host: localhost
+    port: 5433  # Docker container uses 5433 to avoid conflict with local PostgreSQL
+    name: kalshi_ts
+    user: postgres
+    password: postgres
+    ssl_mode: disable
+    min_conns: 2
+    max_conns: 10
+
+# Connection Manager settings
+connections:
+  # Number of WebSocket connections for orderbook data
+  orderbook_count: 10          # 144 in prod - reduced for local
+  markets_per_connection: 100  # 250 in prod
+
+  # Global connections (ticker, trade, lifecycle)
+  global_count: 3              # 6 in prod - reduced for local
+
+  # Reconnection settings
+  reconnect_base_delay: 1s
+  reconnect_max_delay: 30s
+
+# Writer settings (batch inserts)
+writers:
+  batch_size: 100              # 1000 in prod
+  flush_interval: 1s           # 100ms in prod
+  buffer_size: 1000            # 10000 in prod
+
+# Snapshot Poller settings
+poller:
+  enabled: true
+  interval: 5m                 # 15m in prod - more frequent for local testing
+  concurrency: 5               # 10 in prod
+
+# Market Registry settings
+market_registry:
+  initial_sync_timeout: 30m
+  reconciliation_interval: 10m
+  exchange_status_interval: 1m
+
+# Metrics server (Prometheus)
+metrics:
+  enabled: true
+  port: 8081
+  path: /metrics
+
+# Health check server
+health:
+  port: 8080
+  path: /health
+
+# Logging
+logging:
+  level: debug                 # info in prod
+  format: text                 # json in prod
