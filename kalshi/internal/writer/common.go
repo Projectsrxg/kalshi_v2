@@ -2,24 +2,16 @@ package writer
 
 import (
 	"encoding/json"
-	"math"
-	"strconv"
 
+	"github.com/rickgao/kalshi-data/internal/api"
 	"github.com/rickgao/kalshi-data/internal/router"
 )
 
 // dollarsToInternal converts a dollar string (e.g., "0.52") to internal
 // integer format (hundred-thousandths: 52000).
+// Uses api.DollarsToInternal for consistent price conversion across the codebase.
 func dollarsToInternal(dollars string) int {
-	if dollars == "" {
-		return 0
-	}
-	f, err := strconv.ParseFloat(dollars, 64)
-	if err != nil {
-		return 0
-	}
-	// Round to avoid floating point errors (e.g., 0.52 * 100000 = 51999.999...)
-	return int(math.Round(f * 100000))
+	return api.DollarsToInternal(dollars)
 }
 
 // sideToBoolean converts "yes"/"no" string to boolean (TRUE = yes, FALSE = no).

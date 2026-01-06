@@ -33,7 +33,7 @@ func (c *Client) GetEvents(ctx context.Context, opts GetEventsOptions) (*EventsR
 }
 
 // GetAllEvents fetches all events by paginating through results.
-// Uses DefaultPaginationTimeout (10m) if the context has no deadline.
+// Uses DefaultPaginationTimeout (30m) if the context has no deadline.
 func (c *Client) GetAllEvents(ctx context.Context) ([]APIEvent, error) {
 	// Apply default timeout if context has no deadline.
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {

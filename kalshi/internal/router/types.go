@@ -36,7 +36,7 @@ func (f *FlexInt64) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	*f = FlexInt64(t.Unix())
+	*f = FlexInt64(t.UnixMicro()) // Use microseconds per CLAUDE.md spec
 	return nil
 }
 

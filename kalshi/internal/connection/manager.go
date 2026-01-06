@@ -927,6 +927,19 @@ func (m *manager) checkSequence(connID int, sid int64, seq int64) (seqGap bool, 
 	return false, 0
 }
 
+// clearSequenceTracking removes all sequence tracking entries for a connection.
+// Call this when a connection fails to prevent memory leaks from orphaned SIDs.
+func (m *manager) clearSequenceTracking(connID int) {
+	m.seqMu.Lock()
+	defer m.seqMu.Unlock()
+
+	for key := range m.lastSeq {
+		if key.connID == connID {
+			delete(m.lastSeq, key)
+		}
+	}
+}
+
 // subscribe sends a subscribe command and waits for response.
 func (m *manager) subscribe(conn *connState, channel, ticker string) error {
 	id := atomic.AddInt64(&conn.cmdID, 1)
@@ -1141,6 +1154,9 @@ func (m *manager) redistributeMarkets(failedConn *connState) int {
 	// Clear the failed connection's market list
 	failedConn.markets = make(map[string]struct{})
 	failedConn.mu.Unlock()
+
+	// Clean up sequence tracking for this connection to prevent memory leak
+	m.clearSequenceTracking(failedConn.id)
 
 	if len(markets) == 0 {
 		return 0

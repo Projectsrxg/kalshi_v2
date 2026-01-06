@@ -44,7 +44,7 @@ func (c *Client) GetMarkets(ctx context.Context, opts GetMarketsOptions) (*Marke
 }
 
 // GetAllMarkets fetches all markets by paginating through results.
-// Uses DefaultPaginationTimeout (10m) if the context has no deadline.
+// Uses DefaultPaginationTimeout (30m) if the context has no deadline.
 func (c *Client) GetAllMarkets(ctx context.Context) ([]APIMarket, error) {
 	return c.GetAllMarketsWithOptions(ctx, GetMarketsOptions{})
 }
