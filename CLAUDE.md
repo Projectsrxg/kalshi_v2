@@ -46,7 +46,7 @@ flowchart TD
 ## Kalshi API
 
 - **REST**: `https://api.elections.kalshi.com/trade-api/v2`
-- **WebSocket**: `wss://api.elections.kalshi.com`
+- **WebSocket**: `wss://api.elections.kalshi.com/trade-api/ws/v2`
 - **Demo**: `https://demo-api.kalshi.co/trade-api/v2`
 
 Key WebSocket channels: `orderbook_delta`, `trade`, `ticker`, `market_lifecycle`

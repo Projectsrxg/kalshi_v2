@@ -21,12 +21,12 @@ type InstanceConfig struct {
 
 // APIConfig holds Kalshi API settings.
 type APIConfig struct {
-	RestURL    string        `yaml:"rest_url"`
-	WSURL      string        `yaml:"ws_url"`
-	APIKey     string        `yaml:"api_key"`
-	APISecret  string        `yaml:"api_secret"`
-	Timeout    time.Duration `yaml:"timeout"`
-	MaxRetries int           `yaml:"max_retries"`
+	RestURL        string        `yaml:"rest_url"`
+	WSURL          string        `yaml:"ws_url"`
+	APIKey         string        `yaml:"api_key"`          // API key ID (for KALSHI-ACCESS-KEY header)
+	PrivateKeyPath string        `yaml:"private_key_path"` // Path to RSA private key PEM file
+	Timeout        time.Duration `yaml:"timeout"`
+	MaxRetries     int           `yaml:"max_retries"`
 }
 
 // DatabaseConfig holds the TimescaleDB connection for time-series data.

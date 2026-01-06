@@ -2,6 +2,11 @@ package api
 
 import (
 	"context"
+	"crypto"
+	cryptorand "crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -40,8 +45,28 @@ func (c *Client) doRequest(ctx context.Context, method, path string, query url.V
 	}
 
 	req.Header.Set("Accept", "application/json")
-	if c.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	// Add Kalshi authentication headers if credentials are provided
+	if c.keyID != "" && c.privateKey != nil {
+		// Parse the base URL to get the full signature path
+		// e.g., baseURL = "https://api.elections.kalshi.com/trade-api/v2"
+		// path = "/exchange/status"
+		// signaturePath = "/trade-api/v2/exchange/status"
+		parsedURL, err := url.Parse(c.baseURL)
+		if err != nil {
+			return nil, fmt.Errorf("parse base url: %w", err)
+		}
+		signaturePath := parsedURL.Path + path
+
+		timestampMs := time.Now().UnixMilli()
+		signature, err := c.generateSignature(timestampMs, method, signaturePath)
+		if err != nil {
+			return nil, fmt.Errorf("generate signature: %w", err)
+		}
+
+		req.Header.Set("KALSHI-ACCESS-KEY", c.keyID)
+		req.Header.Set("KALSHI-ACCESS-TIMESTAMP", fmt.Sprintf("%d", timestampMs))
+		req.Header.Set("KALSHI-ACCESS-SIGNATURE", signature)
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -66,6 +91,30 @@ func (c *Client) doRequest(ctx context.Context, method, path string, query url.V
 	return body, nil
 }
 
+// generateSignature creates an RSA-PSS signature for Kalshi API authentication.
+// Message format: timestamp_ms + method + path
+func (c *Client) generateSignature(timestampMs int64, method, path string) (string, error) {
+	// Construct the message to sign
+	message := fmt.Sprintf("%d%s%s", timestampMs, method, path)
+
+	// Hash the message with SHA-256
+	hashed := sha256.Sum256([]byte(message))
+
+	// Sign with RSA-PSS
+	signature, err := rsa.SignPSS(
+		cryptorand.Reader,
+		c.privateKey,
+		crypto.SHA256,
+		hashed[:],
+		&rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash},
+	)
+	if err != nil {
+		return "", fmt.Errorf("sign message: %w", err)
+	}
+
+	return base64.StdEncoding.EncodeToString(signature), nil
+}
+
 // doWithRetry performs a request with exponential backoff retry.
 func (c *Client) doWithRetry(ctx context.Context, method, path string, query url.Values) ([]byte, error) {
 	var lastErr error
@@ -74,7 +123,7 @@ func (c *Client) doWithRetry(ctx context.Context, method, path string, query url
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if attempt > 0 {
 			// Add jitter: backoff * (0.5 to 1.5)
-			jitter := backoff / 2 + time.Duration(rand.Int64N(int64(backoff)))
+			jitter := backoff/2 + time.Duration(rand.Int64N(int64(backoff)))
 			c.logger.Debug("retrying request",
 				"attempt", attempt,
 				"backoff", jitter,

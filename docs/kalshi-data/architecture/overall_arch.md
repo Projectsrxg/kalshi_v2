@@ -10,7 +10,7 @@ Comprehensive view of the Kalshi Data Platform.
 flowchart TB
     subgraph External["External Services"]
         KALSHI_REST[("Kalshi REST API<br/>api.elections.kalshi.com")]
-        KALSHI_WS[("Kalshi WebSocket<br/>wss://api.elections.kalshi.com")]
+        KALSHI_WS[("Kalshi WebSocket<br/>wss://api.elections.kalshi.com/trade-api/ws/v2")]
     end
 
     subgraph AWS["AWS us-east-1"]

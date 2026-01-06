@@ -84,7 +84,7 @@ psql -c "SELECT COUNT(*) FROM trades WHERE exchange_ts > extract(epoch from now(
 
 3. **Test Kalshi API directly**
    ```bash
-   wscat -c wss://api.elections.kalshi.com
+   wscat -c wss://api.elections.kalshi.com/trade-api/ws/v2
    ```
 
 4. **Check network connectivity**

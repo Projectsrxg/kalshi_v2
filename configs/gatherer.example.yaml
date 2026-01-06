@@ -9,10 +9,15 @@ instance:
 # Kalshi API configuration
 api:
   rest_url: https://demo-api.kalshi.co/trade-api/v2
-  ws_url: wss://demo-api.kalshi.co
+  ws_url: wss://demo-api.kalshi.co/trade-api/ws/v2
   # For production, use:
   # rest_url: https://api.elections.kalshi.com/trade-api/v2
-  # ws_url: wss://api.elections.kalshi.com
+  # ws_url: wss://api.elections.kalshi.com/trade-api/ws/v2
+
+  # Authentication (REQUIRED for WebSocket connections)
+  # Get your API key from the Kalshi dashboard
+  api_key: ${KALSHI_API_KEY}
+  private_key_path: ${KALSHI_PRIVATE_KEY_PATH}  # Path to RSA private key PEM file
 
 # Database connection (TimescaleDB for time-series data)
 # Note: Market metadata lives in-memory (Market Registry), no PostgreSQL needed

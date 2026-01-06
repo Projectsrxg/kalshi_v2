@@ -4,8 +4,8 @@
 
 | Environment | REST API | WebSocket |
 |-------------|----------|-----------|
-| Production | `https://api.elections.kalshi.com/trade-api/v2` | `wss://api.elections.kalshi.com` |
-| Demo | `https://demo-api.kalshi.co/trade-api/v2` | `wss://demo-api.kalshi.co` |
+| Production | `https://api.elections.kalshi.com/trade-api/v2` | `wss://api.elections.kalshi.com/trade-api/ws/v2` |
+| Demo | `https://demo-api.kalshi.co/trade-api/v2` | `wss://demo-api.kalshi.co/trade-api/ws/v2` |
 
 ---
 

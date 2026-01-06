@@ -39,7 +39,7 @@ server:
 # Kalshi API configuration
 api:
   base_url: "https://api.elections.kalshi.com/trade-api/v2"
-  ws_url: "wss://api.elections.kalshi.com"
+  ws_url: "wss://api.elections.kalshi.com/trade-api/ws/v2"
   api_key: "${KALSHI_API_KEY}"           # Required
   api_secret: "${KALSHI_API_SECRET}"     # Required if using signed requests
   timeout: 30s
@@ -446,8 +446,9 @@ gatherer_id: "dev-gatherer"
 
 api:
   base_url: "https://demo-api.kalshi.co/trade-api/v2"
-  ws_url: "wss://demo-api.kalshi.co"
+  ws_url: "wss://demo-api.kalshi.co/trade-api/ws/v2"
   api_key: "${KALSHI_API_KEY}"
+  private_key_path: "${KALSHI_PRIVATE_KEY_PATH}"
 
 timescaledb:
   host: "localhost"
@@ -473,7 +474,7 @@ gatherer_id: "gatherer-1"
 
 api:
   base_url: "https://api.elections.kalshi.com/trade-api/v2"
-  ws_url: "wss://api.elections.kalshi.com"
+  ws_url: "wss://api.elections.kalshi.com/trade-api/ws/v2"
   api_key: "${KALSHI_API_KEY}"
 
 timescaledb:

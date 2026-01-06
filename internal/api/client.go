@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/rsa"
 	"log/slog"
 	"net/http"
 	"time"
@@ -9,7 +10,8 @@ import (
 // Client provides access to the Kalshi REST API.
 type Client struct {
 	baseURL    string
-	apiKey     string
+	keyID      string          // API key ID for KALSHI-ACCESS-KEY header
+	privateKey *rsa.PrivateKey // RSA private key for signing requests
 	httpClient *http.Client
 	logger     *slog.Logger
 
@@ -21,10 +23,13 @@ type Client struct {
 type ClientOption func(*Client)
 
 // NewClient creates a new REST API client.
-func NewClient(baseURL, apiKey string, opts ...ClientOption) *Client {
+// keyID is the API key ID, privateKey is the RSA private key for signing.
+// Pass nil for privateKey to make unauthenticated requests (will fail for most endpoints).
+func NewClient(baseURL string, keyID string, privateKey *rsa.PrivateKey, opts ...ClientOption) *Client {
 	c := &Client{
-		baseURL: baseURL,
-		apiKey:  apiKey,
+		baseURL:    baseURL,
+		keyID:      keyID,
+		privateKey: privateKey,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},

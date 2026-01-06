@@ -223,7 +223,7 @@ Each binary has its own configuration structure:
 # configs/gatherer.yaml
 api:
   base_url: "https://api.elections.kalshi.com/trade-api/v2"
-  ws_url: "wss://api.elections.kalshi.com"
+  ws_url: "wss://api.elections.kalshi.com/trade-api/ws/v2"
   api_key: "${KALSHI_API_KEY}"
 
 database:

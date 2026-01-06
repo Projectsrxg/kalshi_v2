@@ -298,7 +298,7 @@ func (r *router) parseOrderbookDelta(raw connection.RawMessage) (OrderbookMsg, e
 		PriceDollars: wire.Msg.PriceDollars,
 		Delta:        wire.Msg.Delta,
 		Side:         wire.Msg.Side,
-		ExchangeTs:   wire.Msg.Ts * 1_000_000, // seconds → microseconds
+		ExchangeTs:   int64(wire.Msg.Ts) * 1_000_000, // seconds → microseconds
 	}, nil
 }
 
@@ -318,7 +318,7 @@ func (r *router) parseTrade(raw connection.RawMessage) (TradeMsg, error) {
 		TakerSide:       wire.Msg.TakerSide,
 		SID:             wire.SID,
 		Seq:             wire.Seq,
-		ExchangeTs:      wire.Msg.Ts * 1_000_000,
+		ExchangeTs:      int64(wire.Msg.Ts) * 1_000_000,
 		ReceivedAt:      raw.ReceivedAt,
 		SeqGap:          raw.SeqGap,
 		GapSize:         raw.GapSize,
@@ -343,7 +343,7 @@ func (r *router) parseTicker(raw connection.RawMessage) (TickerMsg, error) {
 		DollarVolume:       wire.Msg.DollarVolume,
 		DollarOpenInterest: wire.Msg.DollarOpenInterest,
 		SID:                wire.SID,
-		ExchangeTs:         wire.Msg.Ts * 1_000_000,
+		ExchangeTs:         int64(wire.Msg.Ts) * 1_000_000,
 		ReceivedAt:         raw.ReceivedAt,
 		// Note: ticker has no Seq field
 	}, nil

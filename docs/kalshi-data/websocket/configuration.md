@@ -9,8 +9,9 @@ Config options, error handling, and metrics for WebSocket Client.
 ```go
 type ClientConfig struct {
     // Connection
-    URL    string // wss://api.elections.kalshi.com
-    APIKey string
+    URL        string        // wss://api.elections.kalshi.com/trade-api/ws/v2
+    KeyID      string        // API key ID for KALSHI-ACCESS-KEY header
+    PrivateKey *rsa.PrivateKey // RSA private key for signing
 
     // Timeouts
     DialTimeout  time.Duration // 10s
@@ -21,7 +22,7 @@ type ClientConfig struct {
     ErrorBufferSize   int // 10
 
     // Heartbeat
-    PingTimeout time.Duration // 30s (consider stale if no ping)
+    PingTimeout time.Duration // 60s (consider stale if no ping)
 }
 ```
 
@@ -31,13 +32,14 @@ type ClientConfig struct {
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `URL` | string | `wss://api.elections.kalshi.com` | WebSocket endpoint |
-| `APIKey` | string | - | API key for auth header |
+| `URL` | string | `wss://api.elections.kalshi.com/trade-api/ws/v2` | WebSocket endpoint |
+| `KeyID` | string | - | API key ID for auth header |
+| `PrivateKey` | *rsa.PrivateKey | - | RSA private key for signing |
 | `DialTimeout` | Duration | 10s | Connection timeout |
 | `WriteTimeout` | Duration | 5s | Write deadline |
 | `MessageBufferSize` | int | 10000 | Buffer for message channel |
 | `ErrorBufferSize` | int | 10 | Buffer for error channel |
-| `PingTimeout` | Duration | 30s | Mark stale if no ping received |
+| `PingTimeout` | Duration | 60s | Mark stale if no ping received |
 
 ---
 

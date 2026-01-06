@@ -13,10 +13,14 @@ import (
 	"time"
 
 	"github.com/rickgao/kalshi-data/internal/api"
+	"github.com/rickgao/kalshi-data/internal/auth"
 	"github.com/rickgao/kalshi-data/internal/config"
+	"github.com/rickgao/kalshi-data/internal/connection"
 	"github.com/rickgao/kalshi-data/internal/database"
 	"github.com/rickgao/kalshi-data/internal/market"
+	"github.com/rickgao/kalshi-data/internal/router"
 	"github.com/rickgao/kalshi-data/internal/version"
+	"github.com/rickgao/kalshi-data/internal/writer"
 )
 
 func main() {
@@ -76,14 +80,39 @@ func main() {
 
 	logger.Info("database connected")
 
+	// Load API credentials
+	var privateKey *auth.Credentials
+	if cfg.API.PrivateKeyPath != "" {
+		var err error
+		privateKey, err = auth.LoadCredentials(cfg.API.APIKey, cfg.API.PrivateKeyPath)
+		if err != nil {
+			logger.Error("failed to load API credentials", "error", err)
+			os.Exit(1)
+		}
+		logger.Info("loaded API credentials", "key_id", cfg.API.APIKey)
+	}
+
 	// Create API client
-	apiClient := api.NewClient(
-		cfg.API.RestURL,
-		cfg.API.APIKey,
-		api.WithLogger(logger),
-		api.WithTimeout(30*time.Second),
-		api.WithRetries(3, time.Second),
-	)
+	var apiClient *api.Client
+	if privateKey != nil {
+		apiClient = api.NewClient(
+			cfg.API.RestURL,
+			cfg.API.APIKey,
+			privateKey.PrivateKey,
+			api.WithLogger(logger),
+			api.WithTimeout(30*time.Second),
+			api.WithRetries(3, time.Second),
+		)
+	} else {
+		apiClient = api.NewClient(
+			cfg.API.RestURL,
+			cfg.API.APIKey,
+			nil,
+			api.WithLogger(logger),
+			api.WithTimeout(30*time.Second),
+			api.WithRetries(3, time.Second),
+		)
+	}
 
 	// Check exchange status
 	logger.Info("checking exchange status")
@@ -140,10 +169,97 @@ func main() {
 		"active_markets", len(activeMarkets),
 	)
 
-	// TODO: Start Connection Manager (WebSocket connections)
-	// TODO: Start Message Router
-	// TODO: Start Writers
-	// TODO: Start Snapshot Poller
+	// Create Connection Manager (don't start yet - need consumers ready first)
+	connMgrCfg := connection.DefaultManagerConfig()
+	connMgrCfg.WSURL = cfg.API.WSURL
+	connMgrCfg.KeyID = cfg.API.APIKey
+	if privateKey != nil {
+		connMgrCfg.PrivateKey = privateKey.PrivateKey
+	}
+
+	connMgr := connection.NewManager(connMgrCfg, registry, logger)
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer shutdownCancel()
+		connMgr.Stop(shutdownCtx)
+	}()
+
+	// Create and Start Message Router BEFORE Connection Manager
+	// (so it's ready to consume messages as soon as connections are established)
+	routerCfg := router.DefaultRouterConfig()
+	msgRouter := router.NewRouter(routerCfg, connMgr.Messages(), logger)
+
+	logger.Info("starting message router...")
+	if err := msgRouter.Start(ctx); err != nil {
+		logger.Error("failed to start message router", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		msgRouter.Stop(shutdownCtx)
+	}()
+	logger.Info("message router started")
+
+	// Create and Start Writers BEFORE Connection Manager
+	writerCfg := writer.WriterConfig{
+		BatchSize:     cfg.Writers.BatchSize,
+		FlushInterval: cfg.Writers.FlushInterval,
+	}
+	if writerCfg.BatchSize == 0 {
+		writerCfg.BatchSize = 1000
+	}
+	if writerCfg.FlushInterval == 0 {
+		writerCfg.FlushInterval = 5 * time.Second
+	}
+
+	buffers := msgRouter.Buffers()
+
+	tradeWriter := writer.NewTradeWriter(writerCfg, buffers.Trade, pools.Timescale, logger)
+	orderbookWriter := writer.NewOrderbookWriter(writerCfg, buffers.Orderbook, pools.Timescale, logger)
+	tickerWriter := writer.NewTickerWriter(writerCfg, buffers.Ticker, pools.Timescale, logger)
+
+	logger.Info("starting writers...")
+	if err := tradeWriter.Start(ctx); err != nil {
+		logger.Error("failed to start trade writer", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		tradeWriter.Stop(shutdownCtx)
+	}()
+
+	if err := orderbookWriter.Start(ctx); err != nil {
+		logger.Error("failed to start orderbook writer", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		orderbookWriter.Stop(shutdownCtx)
+	}()
+
+	if err := tickerWriter.Start(ctx); err != nil {
+		logger.Error("failed to start ticker writer", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		tickerWriter.Stop(shutdownCtx)
+	}()
+	logger.Info("writers started")
+
+	// NOW start Connection Manager (consumers are ready)
+	logger.Info("starting connection manager...")
+	if err := connMgr.Start(ctx); err != nil {
+		logger.Error("failed to start connection manager", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("connection manager started")
+
+	// TODO: Start Snapshot Poller (optional, for backup data)
 
 	logger.Info("gatherer running",
 		"instance_id", cfg.Instance.ID,

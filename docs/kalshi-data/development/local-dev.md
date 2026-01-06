@@ -89,9 +89,9 @@ vim .env
 ```bash
 # Kalshi API (production API works for read-only data collection)
 KALSHI_API_URL=https://api.elections.kalshi.com/trade-api/v2
-KALSHI_WS_URL=wss://api.elections.kalshi.com
-KALSHI_API_KEY=your-api-key
-KALSHI_API_SECRET=your-api-secret
+KALSHI_WS_URL=wss://api.elections.kalshi.com/trade-api/ws/v2
+KALSHI_API_KEY=your-api-key-id
+KALSHI_PRIVATE_KEY_PATH=/path/to/your/private-key.pem
 
 # Local database
 TIMESCALEDB_URL=postgres://postgres:postgres@localhost:5432/kalshi_ts?sslmode=disable

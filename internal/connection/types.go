@@ -99,8 +99,9 @@ type LifecycleMsg struct {
 
 // ClientConfig configures a WebSocket client.
 type ClientConfig struct {
-	URL          string        // WebSocket URL
-	APIKey       string        // API key for authentication (optional for read-only)
+	URL          string        // WebSocket URL (e.g., wss://api.elections.kalshi.com/trade-api/ws/v2)
+	KeyID        string        // API key ID for KALSHI-ACCESS-KEY header
+	PrivateKey   interface{}   // *rsa.PrivateKey for signing (nil = no auth)
 	PingTimeout  time.Duration // Max time without ping before considering connection stale
 	WriteTimeout time.Duration // Write deadline for sends
 	BufferSize   int           // Message channel buffer size
@@ -109,16 +110,17 @@ type ClientConfig struct {
 // DefaultClientConfig returns sensible defaults.
 func DefaultClientConfig() ClientConfig {
 	return ClientConfig{
-		PingTimeout:  30 * time.Second,
+		PingTimeout:  60 * time.Second,
 		WriteTimeout: 5 * time.Second,
-		BufferSize:   1000,
+		BufferSize:   100000, // 100K per connection for high-volume markets
 	}
 }
 
 // ManagerConfig configures the Connection Manager.
 type ManagerConfig struct {
-	WSURL             string        // WebSocket URL
-	APIKey            string        // API key (optional)
+	WSURL             string        // WebSocket URL (e.g., wss://api.elections.kalshi.com/trade-api/ws/v2)
+	KeyID             string        // API key ID for authentication
+	PrivateKey        interface{}   // *rsa.PrivateKey for signing requests
 	SubscribeTimeout  time.Duration // Timeout for subscribe commands
 	ReconnectBaseWait time.Duration // Base wait time for reconnection
 	ReconnectMaxWait  time.Duration // Max wait time for reconnection
@@ -132,7 +134,7 @@ func DefaultManagerConfig() ManagerConfig {
 		SubscribeTimeout:  10 * time.Second,
 		ReconnectBaseWait: 1 * time.Second,
 		ReconnectMaxWait:  60 * time.Second,
-		MessageBufferSize: 10000,
+		MessageBufferSize: 1000000, // 1M central buffer for 300K+ markets
 		WorkerCount:       10,
 	}
 }

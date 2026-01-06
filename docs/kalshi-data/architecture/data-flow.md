@@ -163,7 +163,7 @@ sequenceDiagram
     participant WS as WebSocket Client
     participant MR as Message Router
 
-    CM->>WS: Connect to wss://api.elections.kalshi.com
+    CM->>WS: Connect to wss://api.elections.kalshi.com/trade-api/ws/v2
     WS->>K: Subscribe to orderbook_delta, trade, ticker
     K-->>WS: Subscription confirmed
 

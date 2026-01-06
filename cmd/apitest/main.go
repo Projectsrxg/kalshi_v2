@@ -13,7 +13,8 @@ func main() {
 	// Use demo API (no auth required for reads)
 	client := api.NewClient(
 		"https://demo-api.kalshi.co/trade-api/v2",
-		"", // No API key needed for public endpoints
+		"",  // No API key needed for public endpoints
+		nil, // No private key needed for public endpoints
 		api.WithTimeout(30*time.Second),
 	)
 

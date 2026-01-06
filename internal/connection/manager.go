@@ -221,7 +221,8 @@ func (m *manager) Stats() ManagerStats {
 func (m *manager) initConnections() error {
 	clientCfg := ClientConfig{
 		URL:          m.cfg.WSURL,
-		APIKey:       m.cfg.APIKey,
+		KeyID:        m.cfg.KeyID,
+		PrivateKey:   m.cfg.PrivateKey,
 		PingTimeout:  30 * time.Second,
 		WriteTimeout: 5 * time.Second,
 		BufferSize:   1000,
@@ -860,7 +861,8 @@ func (m *manager) reconnect(conn *connState) {
 		// Create new client
 		cfg := ClientConfig{
 			URL:          m.cfg.WSURL,
-			APIKey:       m.cfg.APIKey,
+			KeyID:        m.cfg.KeyID,
+			PrivateKey:   m.cfg.PrivateKey,
 			PingTimeout:  30 * time.Second,
 			WriteTimeout: 5 * time.Second,
 			BufferSize:   1000,

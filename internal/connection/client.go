@@ -2,8 +2,15 @@ package connection
 
 import (
 	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -78,11 +85,44 @@ func (c *client) Connect(ctx context.Context) error {
 	}
 	c.mu.Unlock()
 
-	// Build headers
+	// Build headers with Kalshi authentication
 	header := http.Header{}
 	header.Set("Accept", "application/json")
-	if c.cfg.APIKey != "" {
-		header.Set("Authorization", "Bearer "+c.cfg.APIKey)
+
+	// Add authentication headers if credentials are provided
+	if c.cfg.KeyID != "" && c.cfg.PrivateKey != nil {
+		privateKey, ok := c.cfg.PrivateKey.(*rsa.PrivateKey)
+		if !ok {
+			return fmt.Errorf("PrivateKey must be *rsa.PrivateKey")
+		}
+
+		// Extract path from URL for signing
+		parsedURL, err := url.Parse(c.cfg.URL)
+		if err != nil {
+			return fmt.Errorf("parse WebSocket URL: %w", err)
+		}
+		path := parsedURL.Path
+		if path == "" {
+			path = "/trade-api/ws/v2"
+		}
+
+		// Generate signature
+		timestampMs := time.Now().UnixMilli()
+		signature, err := generateSignature(privateKey, timestampMs, "GET", path)
+		if err != nil {
+			return fmt.Errorf("generate signature: %w", err)
+		}
+
+		header.Set("KALSHI-ACCESS-KEY", c.cfg.KeyID)
+		header.Set("KALSHI-ACCESS-TIMESTAMP", fmt.Sprintf("%d", timestampMs))
+		header.Set("KALSHI-ACCESS-SIGNATURE", signature)
+
+		c.logger.Debug("connecting with authentication",
+			"key_id", c.cfg.KeyID,
+			"timestamp", timestampMs,
+		)
+	} else {
+		c.logger.Warn("connecting without authentication - this will likely fail")
 	}
 
 	// Dial with context
@@ -258,4 +298,28 @@ func (c *client) heartbeatLoop() {
 			}
 		}
 	}
+}
+
+// generateSignature creates an RSA-PSS signature for Kalshi API authentication.
+// Message format: timestamp_ms + method + path
+func generateSignature(privateKey *rsa.PrivateKey, timestampMs int64, method, path string) (string, error) {
+	// Construct the message to sign
+	message := fmt.Sprintf("%d%s%s", timestampMs, method, path)
+
+	// Hash the message with SHA-256
+	hashed := sha256.Sum256([]byte(message))
+
+	// Sign with RSA-PSS
+	signature, err := rsa.SignPSS(
+		rand.Reader,
+		privateKey,
+		crypto.SHA256,
+		hashed[:],
+		&rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash},
+	)
+	if err != nil {
+		return "", fmt.Errorf("sign message: %w", err)
+	}
+
+	return base64.StdEncoding.EncodeToString(signature), nil
 }

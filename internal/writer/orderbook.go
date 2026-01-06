@@ -312,7 +312,7 @@ func (w *OrderbookWriter) batchInsertDeltas(rows []orderbookDeltaRow) (conflicts
 		batch.Queue(`
 			INSERT INTO orderbook_deltas (exchange_ts, received_at, ticker, side, price, size_delta, seq, sid)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-			ON CONFLICT (ticker, exchange_ts, price, side) DO NOTHING
+			ON CONFLICT (exchange_ts, ticker, price, side) DO NOTHING
 		`, r.ExchangeTs, r.ReceivedAt, r.Ticker, r.Side, r.Price, r.SizeDelta, r.Seq, r.SID)
 	}
 
@@ -339,7 +339,7 @@ func (w *OrderbookWriter) batchInsertSnapshots(rows []orderbookSnapshotRow) erro
 		batch.Queue(`
 			INSERT INTO orderbook_snapshots (snapshot_ts, exchange_ts, ticker, source, yes_bids, yes_asks, no_bids, no_asks, best_yes_bid, best_yes_ask, spread, sid)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-			ON CONFLICT (ticker, snapshot_ts, source) DO NOTHING
+			ON CONFLICT (snapshot_ts, ticker, source) DO NOTHING
 		`, r.SnapshotTs, r.ExchangeTs, r.Ticker, r.Source, r.YesBids, r.YesAsks, r.NoBids, r.NoAsks, r.BestYesBid, r.BestYesAsk, r.Spread, r.SID)
 	}
 
