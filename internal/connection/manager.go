@@ -83,9 +83,16 @@ type manager struct {
 	subsMu sync.RWMutex
 	subs   map[int64]*Subscription // SID → subscription info
 
-	// Sequence tracking (per SID)
+	// Sequence tracking (per connection+SID, since SIDs can collide across connections)
 	seqMu   sync.RWMutex
-	lastSeq map[int64]int64 // SID → last sequence number
+	lastSeq map[seqKey]int64
+}
+
+// seqKey uniquely identifies a sequence stream (connection + subscription).
+// SIDs are unique per-connection, not globally, so we need both.
+type seqKey struct {
+	connID int
+	sid    int64
 }
 
 // NewManager creates a new Connection Manager.
@@ -102,7 +109,7 @@ func NewManager(cfg ManagerConfig, registry market.Registry, logger *slog.Logger
 		lifecycle:    make(chan []byte, 100),
 		marketToConn: make(map[string]int),
 		subs:         make(map[int64]*Subscription),
-		lastSeq:      make(map[int64]int64),
+		lastSeq:      make(map[seqKey]int64),
 	}
 }
 
@@ -606,7 +613,7 @@ func (m *manager) readLoop(conn *connState) {
 			var gapSize int
 			if conn.role == RoleOrderbook {
 				if sid, seq, ok := m.extractSequence(msg.Data); ok {
-					seqGap, gapSize = m.checkSequence(sid, seq)
+					seqGap, gapSize = m.checkSequence(conn.id, sid, seq)
 				}
 			}
 
@@ -685,30 +692,32 @@ func (m *manager) extractSequence(data []byte) (sid int64, seq int64, ok bool) {
 }
 
 // checkSequence checks for sequence gaps and returns gap info.
-func (m *manager) checkSequence(sid int64, seq int64) (seqGap bool, gapSize int) {
+func (m *manager) checkSequence(connID int, sid int64, seq int64) (seqGap bool, gapSize int) {
 	m.seqMu.Lock()
 	defer m.seqMu.Unlock()
 
-	last, exists := m.lastSeq[sid]
+	key := seqKey{connID: connID, sid: sid}
+	last, exists := m.lastSeq[key]
 	if !exists {
 		// First message for this subscription
-		m.lastSeq[sid] = seq
+		m.lastSeq[key] = seq
 		return false, 0
 	}
 
 	if seq != last+1 {
 		gap := int(seq - last - 1)
 		m.logger.Warn("sequence gap detected",
+			"conn_id", connID,
 			"sid", sid,
 			"expected", last+1,
 			"got", seq,
 			"gap", gap,
 		)
-		m.lastSeq[sid] = seq
+		m.lastSeq[key] = seq
 		return true, gap
 	}
 
-	m.lastSeq[sid] = seq
+	m.lastSeq[key] = seq
 	return false, 0
 }
 
@@ -829,7 +838,7 @@ func (m *manager) unsubscribe(conn *connState, sid int64) error {
 
 		// Clean up sequence tracking
 		m.seqMu.Lock()
-		delete(m.lastSeq, sid)
+		delete(m.lastSeq, seqKey{connID: conn.id, sid: sid})
 		m.seqMu.Unlock()
 
 		return nil
