@@ -750,7 +750,10 @@ func (m *manager) subscribe(conn *connState, channel, ticker string) error {
 		Params: params,
 	}
 
-	data, _ := json.Marshal(cmd)
+	data, err := json.Marshal(cmd)
+	if err != nil {
+		return fmt.Errorf("marshal subscribe command: %w", err)
+	}
 	if err := conn.client.Send(data); err != nil {
 		return err
 	}
@@ -764,13 +767,17 @@ func (m *manager) subscribe(conn *connState, channel, ticker string) error {
 	case resp := <-respCh:
 		if resp.Type == "error" {
 			var errMsg ErrorMsg
-			json.Unmarshal(resp.Msg, &errMsg)
+			if err := json.Unmarshal(resp.Msg, &errMsg); err != nil {
+				return fmt.Errorf("error response (failed to parse: %v)", err)
+			}
 			return fmt.Errorf("%s: %s", errMsg.Code, errMsg.Message)
 		}
 
 		// Track subscription
 		var subMsg SubscribedMsg
-		json.Unmarshal(resp.Msg, &subMsg)
+		if err := json.Unmarshal(resp.Msg, &subMsg); err != nil {
+			return fmt.Errorf("parse subscribed response: %w", err)
+		}
 
 		m.subsMu.Lock()
 		m.subs[subMsg.SID] = &Subscription{
@@ -815,7 +822,10 @@ func (m *manager) unsubscribe(conn *connState, sid int64) error {
 		},
 	}
 
-	data, _ := json.Marshal(cmd)
+	data, err := json.Marshal(cmd)
+	if err != nil {
+		return fmt.Errorf("marshal unsubscribe command: %w", err)
+	}
 	if err := conn.client.Send(data); err != nil {
 		return err
 	}
@@ -828,7 +838,9 @@ func (m *manager) unsubscribe(conn *connState, sid int64) error {
 	case resp := <-respCh:
 		if resp.Type == "error" {
 			var errMsg ErrorMsg
-			json.Unmarshal(resp.Msg, &errMsg)
+			if err := json.Unmarshal(resp.Msg, &errMsg); err != nil {
+				return fmt.Errorf("error response (failed to parse: %v)", err)
+			}
 			return fmt.Errorf("%s: %s", errMsg.Code, errMsg.Message)
 		}
 

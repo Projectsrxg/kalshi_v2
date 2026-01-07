@@ -2,7 +2,6 @@ package connection
 
 import (
 	"context"
-	"crypto/rsa"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -86,14 +85,9 @@ func (c *client) Connect(ctx context.Context) error {
 
 	// Add RSA-PSS authentication headers if credentials are provided
 	if c.cfg.KeyID != "" && c.cfg.PrivateKey != nil {
-		privateKey, ok := c.cfg.PrivateKey.(*rsa.PrivateKey)
-		if !ok {
-			return ErrInvalidPrivateKey
-		}
-
 		creds := &auth.Credentials{
 			KeyID:      c.cfg.KeyID,
-			PrivateKey: privateKey,
+			PrivateKey: c.cfg.PrivateKey,
 		}
 
 		authHeaders, err := creds.SignWebSocket()
@@ -128,11 +122,14 @@ func (c *client) Connect(ctx context.Context) error {
 		c.lastPingAt = time.Now()
 		c.mu.Unlock()
 
-		return conn.WriteControl(
+		c.writeMu.Lock()
+		err := conn.WriteControl(
 			websocket.PongMessage,
 			[]byte(data),
 			time.Now().Add(time.Second),
 		)
+		c.writeMu.Unlock()
+		return err
 	})
 
 	// Set up pong handler - server responds to our ping
@@ -168,12 +165,16 @@ func (c *client) Close() error {
 
 	// Close the WebSocket connection
 	if c.conn != nil {
-		// Send close message
-		c.conn.WriteControl(
+		// Send close message (protected by writeMu to prevent concurrent writes)
+		c.writeMu.Lock()
+		if err := c.conn.WriteControl(
 			websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
 			time.Now().Add(time.Second),
-		)
+		); err != nil {
+			c.logger.Debug("failed to send close message", "error", err)
+		}
+		c.writeMu.Unlock()
 		return c.conn.Close()
 	}
 
@@ -240,6 +241,7 @@ func (c *client) readLoop() {
 				select {
 				case c.errors <- err:
 				default:
+					c.logger.Warn("error channel full, dropping error", "error", err)
 				}
 				return
 			}
@@ -255,12 +257,15 @@ func (c *client) readLoop() {
 		case <-c.done:
 			return
 		default:
-			c.logger.Warn("message buffer full, dropping message")
+			c.logger.Error("message buffer full, dropping message (data loss)",
+				"buffer_size", cap(c.messages),
+				"msg_size", len(data),
+			)
 		}
 	}
 }
 
-// heartbeatLoop monitors for stale connections.
+// heartbeatLoop monitors for stale connections and sends keepalive pings.
 func (c *client) heartbeatLoop() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -276,25 +281,29 @@ func (c *client) heartbeatLoop() {
 			c.mu.RUnlock()
 
 			if conn != nil {
+				c.writeMu.Lock()
 				deadline := time.Now().Add(c.cfg.WriteTimeout)
-				if err := conn.WriteControl(websocket.PingMessage, []byte("keepalive"), deadline); err != nil {
-					c.logger.Debug("failed to send ping", "error", err)
+				err := conn.WriteControl(websocket.PingMessage, []byte("keepalive"), deadline)
+				c.writeMu.Unlock()
+				if err != nil {
+					c.logger.Warn("failed to send keepalive ping", "error", err)
 				}
 			}
 
-			// Check for stale connection (no pong/ping response)
+			// Check for stale connection (no ping/pong activity)
 			c.mu.RLock()
 			lastPing := c.lastPingAt
 			c.mu.RUnlock()
 
 			if time.Since(lastPing) > c.cfg.PingTimeout {
-				c.logger.Warn("no ping received, connection stale",
-					"last_ping", lastPing,
+				c.logger.Warn("connection stale, no ping/pong activity",
+					"last_activity", lastPing,
 					"timeout", c.cfg.PingTimeout,
 				)
 				select {
 				case c.errors <- ErrStaleConnection:
 				default:
+					c.logger.Warn("error channel full, stale connection error dropped")
 				}
 				return
 			}

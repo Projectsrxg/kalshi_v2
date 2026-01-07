@@ -1,6 +1,7 @@
 package connection
 
 import (
+	"crypto/rsa"
 	"encoding/json"
 	"errors"
 	"time"
@@ -8,11 +9,10 @@ import (
 
 // Errors
 var (
-	ErrNotConnected      = errors.New("not connected")
-	ErrStaleConnection   = errors.New("connection stale (no ping)")
-	ErrTimeout           = errors.New("operation timeout")
-	ErrAlreadyClosed     = errors.New("already closed")
-	ErrInvalidPrivateKey = errors.New("PrivateKey must be *rsa.PrivateKey")
+	ErrNotConnected    = errors.New("not connected")
+	ErrStaleConnection = errors.New("connection stale (no ping)")
+	ErrTimeout         = errors.New("operation timeout")
+	ErrAlreadyClosed   = errors.New("already closed")
 )
 
 // TimestampedMessage wraps raw message data with receive timestamp.
@@ -82,13 +82,13 @@ type ErrorMsg struct {
 
 // DataMessage is a data message from the server (ticker, trade, orderbook, lifecycle).
 type DataMessage struct {
-	Type string          `json:"type"` // "ticker", "trade", "orderbook_delta", "market_lifecycle"
+	Type string          `json:"type"` // "ticker", "trade", "orderbook_delta", "market_lifecycle_v2"
 	SID  int64           `json:"sid"`
 	Seq  int64           `json:"seq,omitempty"` // Sequence number (orderbook only)
 	Msg  json.RawMessage `json:"msg"`
 }
 
-// LifecycleMsg is the message content for a market_lifecycle message.
+// LifecycleMsg is the message content for a market_lifecycle_v2 message.
 type LifecycleMsg struct {
 	MarketTicker string `json:"market_ticker"`
 	EventType    string `json:"event_type"` // "created", "status_change", "settled"
@@ -100,12 +100,12 @@ type LifecycleMsg struct {
 
 // ClientConfig configures a WebSocket client.
 type ClientConfig struct {
-	URL          string        // WebSocket URL (e.g., wss://api.elections.kalshi.com/trade-api/ws/v2)
-	KeyID        string        // API key ID for KALSHI-ACCESS-KEY header
-	PrivateKey   interface{}   // *rsa.PrivateKey for signing (nil = no auth)
-	PingTimeout  time.Duration // Max time without ping before considering connection stale
-	WriteTimeout time.Duration // Write deadline for sends
-	BufferSize   int           // Message channel buffer size
+	URL          string          // WebSocket URL (e.g., wss://api.elections.kalshi.com/trade-api/ws/v2)
+	KeyID        string          // API key ID for KALSHI-ACCESS-KEY header
+	PrivateKey   *rsa.PrivateKey // RSA private key for signing (nil = no auth)
+	PingTimeout  time.Duration   // Max time without ping before considering connection stale
+	WriteTimeout time.Duration   // Write deadline for sends
+	BufferSize   int             // Message channel buffer size
 }
 
 // DefaultClientConfig returns sensible defaults.
@@ -119,15 +119,15 @@ func DefaultClientConfig() ClientConfig {
 
 // ManagerConfig configures the Connection Manager.
 type ManagerConfig struct {
-	WSURL              string        // WebSocket URL (e.g., wss://api.elections.kalshi.com/trade-api/ws/v2)
-	KeyID              string        // API key ID for authentication
-	PrivateKey         interface{}   // *rsa.PrivateKey for signing requests
-	SubscribeTimeout   time.Duration // Timeout for subscribe commands
-	ReconnectBaseWait  time.Duration // Base wait time for reconnection
-	ReconnectMaxWait   time.Duration // Max wait time for reconnection
-	MessageBufferSize  int           // Buffer size for output message channel
-	WorkerCount        int           // Number of subscribe workers
-	SubscribeBatchSize int           // Max markets per batch subscribe command (0 = no batching)
+	WSURL              string          // WebSocket URL (e.g., wss://api.elections.kalshi.com/trade-api/ws/v2)
+	KeyID              string          // API key ID for authentication
+	PrivateKey         *rsa.PrivateKey // RSA private key for signing requests (nil = no auth)
+	SubscribeTimeout   time.Duration   // Timeout for subscribe commands
+	ReconnectBaseWait  time.Duration   // Base wait time for reconnection
+	ReconnectMaxWait   time.Duration   // Max wait time for reconnection
+	MessageBufferSize  int             // Buffer size for output message channel
+	WorkerCount        int             // Number of subscribe workers
+	SubscribeBatchSize int             // Max markets per batch subscribe command (0 = no batching)
 }
 
 // DefaultManagerConfig returns sensible defaults.
