@@ -225,6 +225,7 @@ func (m *manager) Stats() ManagerStats {
 }
 
 // initConnections creates all WebSocket connections.
+// Returns error if critical connections (lifecycle) all fail.
 func (m *manager) initConnections() error {
 	clientCfg := ClientConfig{
 		URL:          m.cfg.WSURL,
@@ -235,12 +236,15 @@ func (m *manager) initConnections() error {
 		BufferSize:   100000, // 100K per connection for high-volume initial snapshots
 	}
 
+	var tickerConnected, tradeConnected, lifecycleConnected, orderbookConnected int
+
 	// Ticker connections (1-2)
 	for i := 0; i < 2; i++ {
 		conn := m.newConnState(i+1, RoleTicker, clientCfg)
 		if err := conn.client.Connect(m.ctx); err != nil {
 			m.logger.Warn("failed to connect ticker", "id", i+1, "error", err)
-			// Continue - will reconnect later
+		} else {
+			tickerConnected++
 		}
 		m.tickerConns[i] = conn
 	}
@@ -250,6 +254,8 @@ func (m *manager) initConnections() error {
 		conn := m.newConnState(i+3, RoleTrade, clientCfg)
 		if err := conn.client.Connect(m.ctx); err != nil {
 			m.logger.Warn("failed to connect trade", "id", i+3, "error", err)
+		} else {
+			tradeConnected++
 		}
 		m.tradeConns[i] = conn
 	}
@@ -259,6 +265,8 @@ func (m *manager) initConnections() error {
 		conn := m.newConnState(i+5, RoleLifecycle, clientCfg)
 		if err := conn.client.Connect(m.ctx); err != nil {
 			m.logger.Warn("failed to connect lifecycle", "id", i+5, "error", err)
+		} else {
+			lifecycleConnected++
 		}
 		m.lifecycleConns[i] = conn
 	}
@@ -268,8 +276,27 @@ func (m *manager) initConnections() error {
 		conn := m.newConnState(i+7, RoleOrderbook, clientCfg)
 		if err := conn.client.Connect(m.ctx); err != nil {
 			m.logger.Warn("failed to connect orderbook", "id", i+7, "error", err)
+		} else {
+			orderbookConnected++
 		}
 		m.orderbookConns[i] = conn
+	}
+
+	m.logger.Info("initial connections established",
+		"ticker", tickerConnected,
+		"trade", tradeConnected,
+		"lifecycle", lifecycleConnected,
+		"orderbook", orderbookConnected,
+	)
+
+	// Fail if no lifecycle connections - we need market updates
+	if lifecycleConnected == 0 {
+		return fmt.Errorf("failed to establish any lifecycle connections")
+	}
+
+	// Warn if no orderbook connections
+	if orderbookConnected == 0 {
+		m.logger.Error("no orderbook connections established - data collection will fail")
 	}
 
 	return nil
@@ -316,14 +343,19 @@ func (m *manager) startReadLoops() {
 }
 
 // subscribeGlobalChannels subscribes to ticker, trade, and lifecycle channels.
+// Returns error if no lifecycle subscriptions succeed (critical for market updates).
 func (m *manager) subscribeGlobalChannels() error {
+	var tickerSubs, tradeSubs, lifecycleSubs int
+
 	// Subscribe ticker on both connections
 	for i, c := range m.tickerConns {
 		if c == nil || !c.client.IsConnected() {
 			continue
 		}
 		if err := m.subscribe(c, "ticker", ""); err != nil {
-			m.logger.Warn("failed to subscribe ticker", "conn", i+1, "error", err)
+			m.logger.Error("failed to subscribe ticker", "conn", i+1, "error", err)
+		} else {
+			tickerSubs++
 		}
 	}
 
@@ -333,7 +365,9 @@ func (m *manager) subscribeGlobalChannels() error {
 			continue
 		}
 		if err := m.subscribe(c, "trade", ""); err != nil {
-			m.logger.Warn("failed to subscribe trade", "conn", i+3, "error", err)
+			m.logger.Error("failed to subscribe trade", "conn", i+3, "error", err)
+		} else {
+			tradeSubs++
 		}
 	}
 
@@ -343,8 +377,21 @@ func (m *manager) subscribeGlobalChannels() error {
 			continue
 		}
 		if err := m.subscribe(c, "market_lifecycle_v2", ""); err != nil {
-			m.logger.Warn("failed to subscribe lifecycle", "conn", i+5, "error", err)
+			m.logger.Error("failed to subscribe lifecycle", "conn", i+5, "error", err)
+		} else {
+			lifecycleSubs++
 		}
+	}
+
+	m.logger.Info("global channel subscriptions",
+		"ticker", tickerSubs,
+		"trade", tradeSubs,
+		"lifecycle", lifecycleSubs,
+	)
+
+	// Fail if no lifecycle subscriptions - we need market updates
+	if lifecycleSubs == 0 {
+		return fmt.Errorf("failed to subscribe to any lifecycle channels")
 	}
 
 	return nil
@@ -578,7 +625,7 @@ func (m *manager) readLoop(conn *connState) {
 			return
 
 		case err := <-conn.client.Errors():
-			m.logger.Warn("connection error",
+			m.logger.Error("connection error, triggering reconnect",
 				"conn", conn.id,
 				"role", conn.role,
 				"error", err,
@@ -631,8 +678,9 @@ func (m *manager) readLoop(conn *connState) {
 			case <-m.ctx.Done():
 				return
 			default:
-				m.logger.Warn("message buffer full, dropping",
+				m.logger.Error("message buffer full, dropping message (data loss)",
 					"conn", conn.id,
+					"role", conn.role,
 				)
 			}
 		}
@@ -706,6 +754,17 @@ func (m *manager) checkSequence(connID int, sid int64, seq int64) (seqGap bool, 
 
 	if seq != last+1 {
 		gap := int(seq - last - 1)
+		if gap < 0 {
+			// Sequence went backwards - likely reset or out-of-order
+			m.logger.Warn("sequence reset or out-of-order",
+				"conn_id", connID,
+				"sid", sid,
+				"expected", last+1,
+				"got", seq,
+			)
+			m.lastSeq[key] = seq
+			return true, 0
+		}
 		m.logger.Warn("sequence gap detected",
 			"conn_id", connID,
 			"sid", sid,
@@ -876,10 +935,20 @@ func (m *manager) reconnect(conn *connState) {
 			"role", conn.role,
 		)
 
-		// Close old connection
+		// Close old connection and wait for old read loop to finish
 		conn.client.Close()
 
-		// Create new client
+		// Wait for old read loop to exit (with timeout to prevent deadlock)
+		select {
+		case <-conn.readLoopDone:
+			// Old read loop finished
+		case <-time.After(5 * time.Second):
+			m.logger.Warn("timeout waiting for old read loop to finish", "conn", conn.id)
+		case <-m.ctx.Done():
+			return
+		}
+
+		// Create new client (safe now that old read loop is done)
 		cfg := ClientConfig{
 			URL:          m.cfg.WSURL,
 			KeyID:        m.cfg.KeyID,
@@ -888,9 +957,12 @@ func (m *manager) reconnect(conn *connState) {
 			WriteTimeout: 5 * time.Second,
 			BufferSize:   100000,
 		}
+
+		conn.mu.Lock()
 		conn.client = NewClient(cfg, m.logger.With("conn_id", conn.id, "role", conn.role))
 		conn.readLoopDone = make(chan struct{})
 		conn.pending = make(map[int64]chan Response)
+		conn.mu.Unlock()
 
 		if err := conn.client.Connect(m.ctx); err != nil {
 			m.logger.Warn("reconnection failed",
@@ -909,13 +981,32 @@ func (m *manager) reconnect(conn *connState) {
 		m.logger.Info("reconnected", "conn", conn.id)
 
 		// Re-subscribe based on role
+		var subscribeErr error
 		switch conn.role {
 		case RoleTicker:
-			m.subscribe(conn, "ticker", "")
+			if err := m.subscribe(conn, "ticker", ""); err != nil {
+				m.logger.Error("failed to resubscribe ticker after reconnect",
+					"conn", conn.id,
+					"error", err,
+				)
+				subscribeErr = err
+			}
 		case RoleTrade:
-			m.subscribe(conn, "trade", "")
+			if err := m.subscribe(conn, "trade", ""); err != nil {
+				m.logger.Error("failed to resubscribe trade after reconnect",
+					"conn", conn.id,
+					"error", err,
+				)
+				subscribeErr = err
+			}
 		case RoleLifecycle:
-			m.subscribe(conn, "market_lifecycle_v2", "")
+			if err := m.subscribe(conn, "market_lifecycle_v2", ""); err != nil {
+				m.logger.Error("failed to resubscribe lifecycle after reconnect",
+					"conn", conn.id,
+					"error", err,
+				)
+				subscribeErr = err
+			}
 		case RoleOrderbook:
 			// Re-subscribe to all markets on this connection
 			conn.mu.Lock()
@@ -925,9 +1016,30 @@ func (m *manager) reconnect(conn *connState) {
 			}
 			conn.mu.Unlock()
 
+			var failedCount int
 			for _, ticker := range markets {
-				m.subscribe(conn, "orderbook_delta", ticker)
+				if err := m.subscribe(conn, "orderbook_delta", ticker); err != nil {
+					m.logger.Error("failed to resubscribe orderbook after reconnect",
+						"conn", conn.id,
+						"ticker", ticker,
+						"error", err,
+					)
+					failedCount++
+				}
 			}
+			if failedCount > 0 {
+				m.logger.Error("orderbook resubscription partially failed",
+					"conn", conn.id,
+					"failed", failedCount,
+					"total", len(markets),
+				)
+			}
+		}
+
+		// If subscription failed, retry the whole reconnect
+		if subscribeErr != nil {
+			wait = m.cfg.ReconnectBaseWait
+			continue
 		}
 
 		// Restart read loop
