@@ -367,11 +367,11 @@ func TestTypes_LifecycleMsg(t *testing.T) {
 
 func TestDefaultConfigs(t *testing.T) {
 	clientCfg := DefaultClientConfig()
-	if clientCfg.PingTimeout != 30*time.Second {
-		t.Errorf("PingTimeout = %v, want 30s", clientCfg.PingTimeout)
+	if clientCfg.PingTimeout != 5*time.Minute {
+		t.Errorf("PingTimeout = %v, want 5m", clientCfg.PingTimeout)
 	}
-	if clientCfg.BufferSize != 1000 {
-		t.Errorf("BufferSize = %d, want 1000", clientCfg.BufferSize)
+	if clientCfg.BufferSize != 100000 {
+		t.Errorf("BufferSize = %d, want 100000", clientCfg.BufferSize)
 	}
 
 	mgrCfg := DefaultManagerConfig()
@@ -380,5 +380,8 @@ func TestDefaultConfigs(t *testing.T) {
 	}
 	if mgrCfg.WorkerCount != 10 {
 		t.Errorf("WorkerCount = %d, want 10", mgrCfg.WorkerCount)
+	}
+	if mgrCfg.SubscribeBatchSize != 1000 {
+		t.Errorf("SubscribeBatchSize = %d, want 1000", mgrCfg.SubscribeBatchSize)
 	}
 }

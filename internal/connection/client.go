@@ -2,12 +2,14 @@ package connection
 
 import (
 	"context"
+	"crypto/rsa"
 	"log/slog"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/rickgao/kalshi-data/internal/auth"
 )
 
 // Client represents a single WebSocket connection to Kalshi.
@@ -78,11 +80,30 @@ func (c *client) Connect(ctx context.Context) error {
 	}
 	c.mu.Unlock()
 
-	// Build headers
+	// Build headers with Kalshi authentication
 	header := http.Header{}
 	header.Set("Accept", "application/json")
-	if c.cfg.APIKey != "" {
-		header.Set("Authorization", "Bearer "+c.cfg.APIKey)
+
+	// Add RSA-PSS authentication headers if credentials are provided
+	if c.cfg.KeyID != "" && c.cfg.PrivateKey != nil {
+		privateKey, ok := c.cfg.PrivateKey.(*rsa.PrivateKey)
+		if !ok {
+			return ErrInvalidPrivateKey
+		}
+
+		creds := &auth.Credentials{
+			KeyID:      c.cfg.KeyID,
+			PrivateKey: privateKey,
+		}
+
+		authHeaders, err := creds.SignWebSocket()
+		if err != nil {
+			return err
+		}
+
+		for key, value := range authHeaders {
+			header.Set(key, value)
+		}
 	}
 
 	// Dial with context

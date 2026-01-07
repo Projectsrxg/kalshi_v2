@@ -8,10 +8,11 @@ import (
 
 // Errors
 var (
-	ErrNotConnected    = errors.New("not connected")
-	ErrStaleConnection = errors.New("connection stale (no ping)")
-	ErrTimeout         = errors.New("operation timeout")
-	ErrAlreadyClosed   = errors.New("already closed")
+	ErrNotConnected      = errors.New("not connected")
+	ErrStaleConnection   = errors.New("connection stale (no ping)")
+	ErrTimeout           = errors.New("operation timeout")
+	ErrAlreadyClosed     = errors.New("already closed")
+	ErrInvalidPrivateKey = errors.New("PrivateKey must be *rsa.PrivateKey")
 )
 
 // TimestampedMessage wraps raw message data with receive timestamp.
@@ -132,11 +133,12 @@ type ManagerConfig struct {
 // DefaultManagerConfig returns sensible defaults.
 func DefaultManagerConfig() ManagerConfig {
 	return ManagerConfig{
-		SubscribeTimeout:  10 * time.Second,
-		ReconnectBaseWait: 1 * time.Second,
-		ReconnectMaxWait:  60 * time.Second,
-		MessageBufferSize: 10000,
-		WorkerCount:       10,
+		SubscribeTimeout:   10 * time.Second,
+		ReconnectBaseWait:  1 * time.Second,
+		ReconnectMaxWait:   60 * time.Second,
+		MessageBufferSize:  10000,
+		WorkerCount:        10,
+		SubscribeBatchSize: 1000, // Batch subscriptions per CLAUDE.md spec
 	}
 }
 

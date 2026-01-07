@@ -389,12 +389,12 @@ func TestManager_MessageRouting(t *testing.T) {
 
 func TestManager_SequenceGapDetection(t *testing.T) {
 	mgr := &manager{
-		lastSeq: make(map[int64]int64),
+		lastSeq: make(map[seqKey]int64),
 		logger:  slog.Default(),
 	}
 
-	// First message - no gap
-	gap, size := mgr.checkSequence(1, 1)
+	// First message - no gap (connID=1, sid=100, seq=1)
+	gap, size := mgr.checkSequence(1, 100, 1)
 	if gap {
 		t.Error("expected no gap for first message")
 	}
@@ -402,14 +402,14 @@ func TestManager_SequenceGapDetection(t *testing.T) {
 		t.Errorf("expected gap size 0, got %d", size)
 	}
 
-	// Sequential message - no gap
-	gap, size = mgr.checkSequence(1, 2)
+	// Sequential message - no gap (connID=1, sid=100, seq=2)
+	gap, size = mgr.checkSequence(1, 100, 2)
 	if gap {
 		t.Error("expected no gap for sequential message")
 	}
 
-	// Gap - skipped sequence 3
-	gap, size = mgr.checkSequence(1, 5)
+	// Gap - skipped sequence 3,4 (connID=1, sid=100, seq=5)
+	gap, size = mgr.checkSequence(1, 100, 5)
 	if !gap {
 		t.Error("expected gap detected")
 	}
@@ -417,10 +417,16 @@ func TestManager_SequenceGapDetection(t *testing.T) {
 		t.Errorf("expected gap size 2, got %d", size)
 	}
 
-	// Different SID - no gap
-	gap, size = mgr.checkSequence(2, 10)
+	// Different SID on same connection - no gap (connID=1, sid=200, seq=10)
+	gap, size = mgr.checkSequence(1, 200, 10)
 	if gap {
 		t.Error("expected no gap for new SID")
+	}
+
+	// Same SID on different connection - no gap (connID=2, sid=100, seq=1)
+	gap, size = mgr.checkSequence(2, 100, 1)
+	if gap {
+		t.Error("expected no gap for same SID on different connection")
 	}
 }
 
