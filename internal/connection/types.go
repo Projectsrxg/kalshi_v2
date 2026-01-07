@@ -99,8 +99,9 @@ type LifecycleMsg struct {
 
 // ClientConfig configures a WebSocket client.
 type ClientConfig struct {
-	URL          string        // WebSocket URL
-	APIKey       string        // API key for authentication (optional for read-only)
+	URL          string        // WebSocket URL (e.g., wss://api.elections.kalshi.com/trade-api/ws/v2)
+	KeyID        string        // API key ID for KALSHI-ACCESS-KEY header
+	PrivateKey   interface{}   // *rsa.PrivateKey for signing (nil = no auth)
 	PingTimeout  time.Duration // Max time without ping before considering connection stale
 	WriteTimeout time.Duration // Write deadline for sends
 	BufferSize   int           // Message channel buffer size
@@ -109,21 +110,23 @@ type ClientConfig struct {
 // DefaultClientConfig returns sensible defaults.
 func DefaultClientConfig() ClientConfig {
 	return ClientConfig{
-		PingTimeout:  30 * time.Second,
+		PingTimeout:  5 * time.Minute, // Long timeout to survive initial snapshot flood
 		WriteTimeout: 5 * time.Second,
-		BufferSize:   1000,
+		BufferSize:   100000, // 100K per connection for high-volume markets
 	}
 }
 
 // ManagerConfig configures the Connection Manager.
 type ManagerConfig struct {
-	WSURL             string        // WebSocket URL
-	APIKey            string        // API key (optional)
-	SubscribeTimeout  time.Duration // Timeout for subscribe commands
-	ReconnectBaseWait time.Duration // Base wait time for reconnection
-	ReconnectMaxWait  time.Duration // Max wait time for reconnection
-	MessageBufferSize int           // Buffer size for output message channel
-	WorkerCount       int           // Number of subscribe workers
+	WSURL              string        // WebSocket URL (e.g., wss://api.elections.kalshi.com/trade-api/ws/v2)
+	KeyID              string        // API key ID for authentication
+	PrivateKey         interface{}   // *rsa.PrivateKey for signing requests
+	SubscribeTimeout   time.Duration // Timeout for subscribe commands
+	ReconnectBaseWait  time.Duration // Base wait time for reconnection
+	ReconnectMaxWait   time.Duration // Max wait time for reconnection
+	MessageBufferSize  int           // Buffer size for output message channel
+	WorkerCount        int           // Number of subscribe workers
+	SubscribeBatchSize int           // Max markets per batch subscribe command (0 = no batching)
 }
 
 // DefaultManagerConfig returns sensible defaults.
